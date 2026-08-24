@@ -5,15 +5,24 @@ lead fields, pipeline stages, call dispositions, custom actions and permission
 templates through the settings UI at runtime — **the codebase ships no business
 taxonomy of its own.**
 
-New to the project? Read [`EXPLAIN-SIMPLE.md`](EXPLAIN-SIMPLE.md) first, then
-[`docs/03-configuration-model.md`](docs/03-configuration-model.md), which is the
-authoritative product spec. The rules that must never be broken live in
-[`CLAUDE.md`](CLAUDE.md).
+New to the project? Read [`docs/03-configuration-model.md`](docs/03-configuration-model.md),
+the authoritative product spec. The rules that must never be broken live in
+[`CLAUDE.md`](CLAUDE.md). To get it running on a fresh machine, follow
+[`docs/08-handoff-voice-agent.md`](docs/08-handoff-voice-agent.md) §2–3 — it is
+written for Windows but the steps are the same everywhere.
 
-**Current status: M0 — scaffold.** The stack stands up, `/health` reports on its
-backing services, and the toolchain is wired end to end. There are no domain
-models, no tables and no API surface beyond `/health` yet; those begin at M1. See
-[`docs/00-milestones.md`](docs/00-milestones.md).
+**Current status: M0–M11 complete.** Every milestone in
+[`docs/00-milestones.md`](docs/00-milestones.md) has landed: tenancy, the field
+engine, the pipeline, permissions, leads, filters, tasks and undo, assignment and
+scheduling, dashboards, the intake API and event bus, and hardening. 706 backend
+tests and 139 Playwright specs.
+
+Deployment is deliberately **not** built — both Dockerfiles carry a "deployment
+images land in M11" comment that now outlives the milestone. Local development is
+fully working.
+
+Next up is the Bolna voice-agent integration on `feat/voice-agent`, specified in
+[`docs/06-voice-integration-contract.md`](docs/06-voice-integration-contract.md).
 
 ---
 

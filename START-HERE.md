@@ -1,3 +1,16 @@
+> **Historical.** This described how to hand the empty repository to Claude Code
+> at the very beginning, and it names `EXPLAIN-SIMPLE.md`, which has since been
+> deleted. The project is now M0–M11 complete.
+>
+> For setting the project up, read
+> [`docs/08-handoff-voice-agent.md`](docs/08-handoff-voice-agent.md).
+> For what to build next, read
+> [`docs/06-voice-integration-contract.md`](docs/06-voice-integration-contract.md).
+> Kept because the reasoning about what to give an agent, and in what order, is
+> still worth reading.
+
+---
+
 # Start here
 
 How to hand this to Claude Code and begin building.
