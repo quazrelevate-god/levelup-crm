@@ -120,6 +120,14 @@ class Settings(BaseSettings):
     smtp_from_address: str = "no-reply@example.invalid"
     smtp_timeout_seconds: float = 15.0
 
+    # --- Tally form intake -------------------------------------------------
+    #: Tally's optional webhook signing secret. Unset means the signature is
+    #: not checked, which is the correct default: the API key is the actual
+    #: credential, and requiring a secret nobody has configured would refuse
+    #: every real submission. Set it and `POST /intake/tally` additionally
+    #: verifies `tally-signature` over the raw request body.
+    tally_signing_secret: str | None = None
+
     # --- Scheduler (M8) ----------------------------------------------------
     #: How often the cron tick runs. A schedule is due if its cron matched at
     #: any point since the last tick, so this is a resolution knob rather than

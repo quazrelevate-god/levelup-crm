@@ -40,6 +40,7 @@ __all__ = [
     "ApiKeyScope",
     "generate_key",
     "require_api_key",
+    "resolve_api_key",
 ]
 
 #: 32 bytes of urlsafe randomness. Long enough that guessing is not a strategy.
@@ -79,12 +80,18 @@ class ApiKeyScope:
         return bool((self.template.capabilities or {}).get("leads", {}).get("admin_access"))
 
 
-async def require_api_key(
+async def resolve_api_key(
     request: Request,
-    session: Annotated[AsyncSession, Depends(get_session)],
-    x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+    session: AsyncSession,
+    presented: str | None,
 ) -> ApiKeyScope:
-    """Resolve `X-API-Key` into a workspace and a permission template.
+    """Verify a presented key and resolve it to a workspace and template.
+
+    Extracted from `require_api_key` so a key can be verified whichever way it
+    arrived. The header is the right channel and stays the default; the one
+    caller that cannot use it is the Bolna completion webhook, because Bolna's
+    agent configuration accepts a bare `webhook_url` and nothing else — no
+    custom headers, no signing secret (`.claude/skills/setup-webhook/SKILL.md`).
 
     Every failure is the same 401 with the same message. Distinguishing "no such
     key" from "revoked" would tell a prober which of their guesses was once
@@ -97,11 +104,12 @@ async def require_api_key(
     def refuse() -> None:
         raise api_error(401, "invalid_api_key", "That API key is not valid")
 
-    if not x_api_key or not x_api_key.startswith(_PREFIX_TAG):
+    if not presented or not presented.startswith(_PREFIX_TAG):
         hasher.dummy_verify()
         refuse()
 
-    assert x_api_key is not None
+    assert presented is not None
+    x_api_key = presented
     rows = await session.execute(
         select(ApiKey).where(
             ApiKey.prefix == x_api_key[:PREFIX_LENGTH], ApiKey.revoked_at.is_(None)
@@ -138,3 +146,17 @@ async def require_api_key(
         template=template,
         session=ScopedSession(session, workspace.id),
     )
+
+
+async def require_api_key(
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+) -> ApiKeyScope:
+    """Resolve `X-API-Key` into a workspace and a permission template.
+
+    Unchanged behaviour: this is still the only way the intake API and the
+    header-authenticated voice endpoint accept a key. It is now a thin wrapper
+    so that exactly one implementation verifies keys.
+    """
+    return await resolve_api_key(request, session, x_api_key)

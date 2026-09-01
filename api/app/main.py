@@ -36,6 +36,7 @@ from app.routers import permission_templates as permission_templates_router
 from app.routers import pipeline as pipeline_router
 from app.routers import reports as reports_router
 from app.routers import routing as routing_router
+from app.routers import tally as tally_router
 from app.routers import views as views_router
 from app.routers import work as work_router
 from app.routers import workspaces as workspaces_router
@@ -154,6 +155,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(reports_router.router, prefix=tenant_prefix)
     # Unscoped by path: the workspace comes from the API key, not the URL.
     app.include_router(intake_router.router, prefix=resolved.api_v1_prefix)
+    # The Tally form webhook. A thin adapter in front of the same
+    # `IntakeService` the line above uses — it adds a translation step and no
+    # new write path, so every intake guarantee applies to it unchanged.
+    app.include_router(tally_router.router, prefix=resolved.api_v1_prefix)
 
     return app
 
