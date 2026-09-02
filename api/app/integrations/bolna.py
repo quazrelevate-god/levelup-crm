@@ -33,6 +33,7 @@ the caller decides.
 from __future__ import annotations
 
 import dataclasses
+import re
 from typing import Any, Protocol, runtime_checkable
 
 __all__ = [
@@ -43,6 +44,7 @@ __all__ = [
     "HttpxBolnaClient",
     "RecordingBolnaClient",
     "bolna_settings_from",
+    "sanitise_vendor_error",
 ]
 
 #: A slow vendor must not hold a request handler open indefinitely. Ten seconds
@@ -52,6 +54,58 @@ REQUEST_TIMEOUT_SECONDS = 15.0
 #: How much of a transport failure we keep. Long enough to diagnose, short
 #: enough that a verbose upstream cannot fill the column.
 MAX_ERROR_LENGTH = 500
+
+#: How much of a *vendor* error body we keep, after redaction.
+VENDOR_DETAIL_LIMIT = 500
+
+_REDACTED = "<redacted>"
+
+#: `Bearer <token>` in any casing — the shape a header echoed back would take.
+_BEARER_RE = re.compile(r"Bearer\s+\S+", re.IGNORECASE)
+
+#: A JSON field whose *name* suggests a credential. The value is replaced
+#: wholesale rather than inspected: guessing which values are safe is how
+#: redaction fails.
+_SECRET_FIELD_RE = re.compile(
+    r'("[^"]*(?:api[_-]?key|token|secret|password|authorization|auth)[^"]*"\s*:\s*)"[^"]*"',
+    re.IGNORECASE,
+)
+
+
+def sanitise_vendor_error(
+    body: str | None, *, secret: str | None = None, limit: int = VENDOR_DETAIL_LIMIT
+) -> str:
+    """Reduce a vendor error body to something safe to store and show.
+
+    Exists because the alternative was worse. This client used to discard the
+    body entirely, on the reasoning that an upstream echoing the request back
+    could put the API key into the database. That held — and it also meant the
+    one time somebody needed the vendor's explanation of a 400, it had already
+    been thrown away, leaving `Bolna answered 400` and no way forward.
+
+    So the body is kept, but only after three passes: the configured key is
+    replaced by exact match, any `Bearer …` is replaced, and any JSON field
+    whose *name* looks credential-ish has its value replaced. Whitespace is
+    collapsed so a multi-line body stays one readable line, and the result is
+    truncated — a verbose upstream must not be able to fill the column.
+
+    Redaction is deliberately name-based rather than entropy-based: a rule that
+    tried to guess which values look secret would eventually redact the vendor
+    message itself, which defeats the purpose of keeping it.
+    """
+    if not body:
+        return ""
+
+    text = body.strip()
+    if secret:
+        text = text.replace(secret, _REDACTED)
+    text = _BEARER_RE.sub(f"Bearer {_REDACTED}", text)
+    text = _SECRET_FIELD_RE.sub(rf'\1"{_REDACTED}"', text)
+    text = " ".join(text.split())
+
+    if len(text) > limit:
+        text = text[: max(0, limit - 1)].rstrip() + "…"
+    return text
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -168,9 +222,8 @@ class HttpxBolnaClient:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 response = await client.post(url, json=request.body(), headers=headers)
         except Exception as exc:
-            # The exception's *type and message* only. A response body is never
-            # copied in: an upstream that echoes the request headers back would
-            # otherwise put the key straight into the database.
+            # The exception's *type and message* only. There is no response to
+            # read here — the request never completed — so nothing to sanitise.
             return BolnaCallResult(
                 execution_id=None,
                 status=None,
@@ -179,11 +232,22 @@ class HttpxBolnaClient:
             )
 
         if response.status_code < 200 or response.status_code >= 300:
+            # The vendor's own explanation, sanitised. Without it a 400 says
+            # only that Bolna refused, and every possible cause — unknown
+            # agent, malformed number, account state — looks identical.
+            detail = ""
+            try:
+                detail = sanitise_vendor_error(response.text, secret=self.__api_key)
+            except Exception:  # pragma: no cover - a body that cannot be read
+                detail = ""
+            message = f"Bolna answered {response.status_code}"
+            if detail:
+                message = f"{message}: {detail}"
             return BolnaCallResult(
                 execution_id=None,
                 status=None,
                 status_code=response.status_code,
-                error=f"Bolna answered {response.status_code}",
+                error=message,
             )
 
         try:
