@@ -18,6 +18,8 @@ import type {
   Page,
   RenderedTemplate,
   TemplateChannel,
+  VoiceCallTrigger,
+  VoiceCallTriggerResult,
 } from '@/api/types'
 
 const leadsKey = (workspaceId: string) => ['leads', workspaceId] as const
@@ -228,5 +230,25 @@ export function useRenderTemplate(workspaceId: string) {
       api.post<RenderedTemplate>(`${base(workspaceId)}/templates/${templateId}/render`, {
         lead_id: leadId,
       }),
+  })
+}
+
+/**
+ * Ask the CRM to place a Bolna call for one lead.
+ *
+ * Deliberately sends nothing but `lead_id`. The server resolves the lead,
+ * projects the fields this caller may view, renders them for speech and adds
+ * the reserved `crm_*` context — so the browser never assembles that payload
+ * and never learns a field the caller could not otherwise read. The Bolna
+ * credential stays server-side; nothing here can reach the vendor directly.
+ *
+ * No cache invalidation: the trigger records a call attempt and does not touch
+ * the lead or its timeline. The write-back arrives later on Bolna's completion
+ * webhook, and invalidating now would only refetch unchanged rows.
+ */
+export function useTriggerVoiceCall(workspaceId: string) {
+  return useMutation({
+    mutationFn: (body: VoiceCallTrigger) =>
+      api.post<VoiceCallTriggerResult>(`${base(workspaceId)}/voice/calls`, body),
   })
 }

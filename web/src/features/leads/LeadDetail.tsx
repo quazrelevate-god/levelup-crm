@@ -44,6 +44,7 @@ import {
   useLogCustomAction,
   useRecordMessage,
   useRenderTemplate,
+  useTriggerVoiceCall,
   useUpdateLead,
 } from '@/features/leads/api'
 import { LeadTimeline } from '@/features/leads/LeadTimeline'
@@ -71,6 +72,10 @@ const ACTION_MESSAGES: Record<string, string> = {
   lost_reason_required: 'Moving to the lost stage needs a reason.',
   predated_not_allowed: 'That action type cannot be logged with a past timestamp.',
   invalid_values: 'One or more values were rejected — see the field errors.',
+  voice_not_configured: 'This deployment has no Bolna credentials configured.',
+  voice_agent_not_configured: 'No Bolna agent id is configured for this deployment.',
+  lead_has_no_phone: 'That lead has no phone number to call.',
+  insufficient_permissions: 'Your permission template does not allow placing calls.',
 }
 
 function message(cause: unknown): string {
@@ -104,12 +109,16 @@ export function LeadDetail({
   const [error, setError] = useState<string | null>(null)
   const [note, setNote] = useState('')
   const [rendered, setRendered] = useState<RenderedTemplate | null>(null)
+  // Kept separate from `error` so a started call reads as a success rather
+  // than sharing the panel's red alert line.
+  const [voiceNotice, setVoiceNotice] = useState<string | null>(null)
 
   const timeline = useLeadTimeline(workspaceId, lead.id)
   const actionFieldTypes = useActionFieldTypes(workspaceId)
   const updateLead = useUpdateLead(workspaceId)
   const addNote = useAddNote(workspaceId)
   const logCall = useLogCall(workspaceId)
+  const triggerVoiceCall = useTriggerVoiceCall(workspaceId)
   const logCustom = useLogCustomAction(workspaceId)
   const recordMessage = useRecordMessage(workspaceId)
   const renderTemplate = useRenderTemplate(workspaceId)
@@ -120,6 +129,7 @@ export function LeadDetail({
     setDraft({})
     setError(null)
     setRendered(null)
+    setVoiceNotice(null)
   }, [lead.id])
 
   const rendererFor = (field: LeadField) =>
@@ -144,6 +154,35 @@ export function LeadDetail({
     if (Object.keys(draft).length === 0) return
     const ok = await run(updateLead.mutateAsync({ leadId: lead.id, values: draft }))
     if (ok) setDraft({})
+  }
+
+  /**
+   * Hand the lead to the backend and let it call Bolna.
+   *
+   * The body is only `lead_id` on purpose: the server resolves the lead,
+   * projects what this caller may view and builds Bolna's `user_data` itself.
+   *
+   * A 2xx is not success. `trigger` commits the attempt row *before* dialling
+   * and reports a vendor refusal in `error` with `status: FAILED`, so the
+   * response has to be read rather than assumed — otherwise a refused call
+   * shows a cheerful "started" message and nobody dials anybody.
+   */
+  const startVoiceCall = async () => {
+    setError(null)
+    setVoiceNotice(null)
+    try {
+      const result = await triggerVoiceCall.mutateAsync({ lead_id: lead.id })
+      if (result.error !== null || result.execution_id === null) {
+        setError(result.error ?? 'Bolna accepted the request but returned no call id.')
+        return
+      }
+      setVoiceNotice(
+        `AI call started · ${result.bolna_status ?? result.status}` +
+          (result.call_count > 0 ? ` · call ${result.call_count + 1} for this lead` : ''),
+      )
+    } catch (cause) {
+      setError(message(cause))
+    }
   }
 
   const currentStage = stages.find((stage) => stage.id === lead.stage_id)
@@ -318,6 +357,26 @@ export function LeadDetail({
 
       <section className="mb-6 space-y-3 border-t pt-4">
         <h3 className="text-sm font-medium">Log activity</h3>
+
+        <div className="space-y-2">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={triggerVoiceCall.isPending}
+            onClick={() => void startVoiceCall()}
+          >
+            {triggerVoiceCall.isPending ? 'Starting AI call…' : '🤖 AI Call'}
+          </Button>
+          {voiceNotice ? (
+            <p role="status" className="text-muted-foreground text-sm">
+              {voiceNotice}
+            </p>
+          ) : null}
+          <p className="text-muted-foreground text-xs">
+            Calls this lead with the configured voice agent. The outcome and any corrected details
+            arrive on the timeline once the call ends.
+          </p>
+        </div>
 
         <div className="space-y-2">
           <Textarea

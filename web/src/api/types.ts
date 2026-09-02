@@ -925,3 +925,51 @@ export interface Dashboard {
   readonly is_default: boolean
   readonly created_at: string
 }
+
+/**
+ * `POST /workspaces/{id}/voice/calls` — ask the CRM to place a Bolna call.
+ *
+ * Exactly one of `lead_id` or `phone` is required. The CRM UI always sends
+ * `lead_id`: the backend resolves the lead, projects the fields this caller
+ * may view, and assembles the Bolna payload itself. A browser that assembled
+ * that payload would be reimplementing the permission projection outside the
+ * one place that owns it.
+ */
+export interface VoiceCallTrigger {
+  readonly lead_id?: string
+  readonly phone?: string
+  /** Overrides the deployment's configured agent for this one call. */
+  readonly agent_id?: string
+}
+
+/**
+ * What the CRM answers once it has spoken to Bolna.
+ *
+ * **A 2xx does not mean the call was placed.** The trigger records the attempt
+ * before dialling and reports a vendor refusal in `error` with `status`
+ * `FAILED`, so callers must read those rather than treating the response code
+ * as the outcome.
+ */
+export interface VoiceCallTriggerResult {
+  /** The CRM's own row id for the attempt. */
+  readonly call_id: string
+  readonly lead_id: string
+  /** Bolna's execution id — the join key for the completion webhook. */
+  readonly execution_id: string | null
+  /** The CRM's view: QUEUED, DISPATCHED, COMPLETED, FAILED. */
+  readonly status: string
+  /** Bolna's own status string, passed through unmapped. */
+  readonly bolna_status: string | null
+  readonly agent_id: string | null
+  readonly recipient_phone: string
+  /**
+   * The exact `user_data` sent to Bolna: projected, rendered lead values plus
+   * the reserved `crm_*` keys. Carries no credential by construction — the
+   * Bolna key never leaves the server.
+   */
+  readonly user_data: Record<string, unknown>
+  /** What this call was told about the previous one. */
+  readonly previous_call_summary: string | null
+  readonly call_count: number
+  readonly error: string | null
+}
