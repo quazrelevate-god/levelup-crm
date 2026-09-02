@@ -30,7 +30,8 @@ from typing import Any
 from sqlalchemy.orm import selectinload
 
 from app.errors import api_error, not_found
-from app.models.enums import ChangesetSource
+from app.models.enums import ChangesetSource, LeadFieldType
+from app.models.field import LeadField
 from app.models.lead import Action, Lead
 from app.models.pipeline import Stage
 from app.models.voice import VoiceCallContext
@@ -136,6 +137,50 @@ class VoiceContextService:
 
     # --- reads -----------------------------------------------------------
 
+    async def _phone_field_key(self) -> str | None:
+        """The key of the field holding the number a call should dial.
+
+        **Deliberately not the identity field.** A workspace designates any
+        field as its identity — Name is a perfectly legitimate choice — and
+        that choice answers "how do I recognise this lead again", not "what
+        number do I ring". Reading the identity as the phone is what put a
+        person's name into `recipient_phone_number` and had Bolna reject the
+        call with "country code is added", which is a confusing way to be told
+        you dialled the word "Perumal".
+
+        Resolved by field **type**, so no customer's field naming is compiled
+        in: `PHONE` is one of the 13 product-owned field types, and which of
+        a workspace's fields carries it is a property of its own schema.
+
+        Order of preference:
+
+        1. The identity field, when it is itself phone-typed. That is the
+           common case and the admin's most explicit statement about which
+           number matters.
+        2. Otherwise the lowest-sorted visible phone field — for a default
+           workspace, `Phone` (sort 1) ahead of `Alternate Phone` (sort 3).
+
+        Returns `None` when the workspace has no phone field at all, which the
+        caller must treat as "cannot call", never as "fall back to something
+        else".
+        """
+        rows = await self._session.execute(
+            self._session.select(LeadField)
+            .where(LeadField.field_type == LeadFieldType.PHONE)
+            .order_by(LeadField.sort_order)
+        )
+        candidates: list[LeadField] = [
+            field for field in rows.scalars().all() if not field.is_hidden
+        ]
+        if not candidates:
+            return None
+
+        identity_id = self._workspace.identity_field_id
+        for field in candidates:
+            if identity_id is not None and field.id == identity_id:
+                return str(field.key)
+        return str(candidates[0].key)
+
     async def get_context(self, lead: Lead) -> VoiceContext:
         """Assemble the full voice-agent context for one lead.
 
@@ -146,7 +191,7 @@ class VoiceContextService:
         """
         projected = await self._leads.project(lead)
         voice_row = await self._voice_row(lead.id)
-        identity_key = await self._leads.identity_key()
+        phone_key = await self._phone_field_key()
 
         stage_name: str | None = None
         if lead.stage_id is not None:
@@ -178,10 +223,9 @@ class VoiceContextService:
             # and `primary_field_1_id` already make. Absent (never renamed
             # away, but conceivably archived) degrades to None, not an error.
             name=values.get("name"),
-            # The workspace's own identity field — Phone by default, but
-            # whichever field the admin designated. Contract §4 calls this
-            # "the lead identity value, E.164".
-            phone=values.get(identity_key) if identity_key else None,
+            # The number to *dial*, which is not the same question as how the
+            # workspace identifies a lead. See `_phone_field_key`.
+            phone=values.get(phone_key) if phone_key else None,
             email=values.get("email"),
             stage_id=lead.stage_id,
             stage_name=stage_name,

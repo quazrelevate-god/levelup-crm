@@ -380,8 +380,14 @@ class VoiceCallService:
             )
 
         context = await self._context.get_context(lead)
-        recipient = context.phone or lead.identity_value
-        if not recipient:  # pragma: no cover - identity is NOT NULL
+        # Only the phone field, with no fallback to `identity_value`. That
+        # fallback used to exist and was actively harmful: a workspace whose
+        # identity is Name would hand Bolna a person's name to dial. Refusing
+        # is the honest answer — "this lead has no number" is actionable,
+        # where a call placed to "Perumal" is a vendor error message nobody
+        # can trace back to a CRM configuration choice.
+        recipient = context.phone
+        if not recipient:
             raise api_error(422, "lead_has_no_phone", "That lead has no phone number")
 
         idempotency_key = uuid.uuid4()
