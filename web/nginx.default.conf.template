@@ -1,0 +1,36 @@
+# Static serving for the built SPA.
+#
+# Rendered by the nginx image's envsubst entrypoint at container start, which
+# substitutes only names present in the environment. `${PORT}` is one (the
+# Dockerfile defaults it to 80 and the platform overrides it); nginx's own
+# `$uri` is not, so it survives untouched.
+
+server {
+    listen       ${PORT};
+    server_name  _;
+
+    root  /usr/share/nginx/html;
+    index index.html;
+
+    # A client-side router owns every path. Without this, a hard refresh on
+    # /settings/voice-extraction asks nginx for a file that does not exist and
+    # gets a 404 — the classic SPA deployment bug.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Hashed assets are immutable by construction; index.html must never be
+    # cached or a deploy leaves clients on the old bundle indefinitely.
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+    location = /index.html {
+        add_header Cache-Control "no-cache";
+    }
+
+    gzip              on;
+    gzip_types        text/css application/javascript application/json image/svg+xml;
+    gzip_min_length   1024;
+}
