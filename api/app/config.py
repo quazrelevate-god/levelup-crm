@@ -120,6 +120,40 @@ class Settings(BaseSettings):
     smtp_from_address: str = "no-reply@example.invalid"
     smtp_timeout_seconds: float = 15.0
 
+    # --- Bolna voice integration (Phase 2) ---------------------------------
+    # A deployment credential, so it lives here rather than in a workspace row:
+    # `api_keys` is for machine callers authenticating *into* the CRM, which is
+    # the opposite direction. Unset means the voice endpoints answer 422
+    # `voice_not_configured` rather than failing to boot — a deployment that
+    # does not use voice must not be required to hold a Bolna key.
+    bolna_api_key: str | None = None
+    bolna_base_url: str = "https://api.bolna.ai"
+    #: The agent a call is placed through. Overridable per call by the trigger.
+    bolna_agent_id: str | None = None
+    bolna_request_timeout_seconds: float = 15.0
+    #: Which Bolna disposition carries the call summary, if the agent uses one.
+    #: Deliberately unset: a disposition name is the *customer's* vocabulary
+    #: (CLAUDE.md, "Known traps"), so the product cannot ship a guess at it.
+    #: Unset means the receiver reads the payload's own `summary` key.
+    bolna_summary_disposition: str | None = None
+    #: Bolna's agent config accepts a bare `webhook_url` and nothing else — no
+    #: custom headers, no signing secret. So the completion webhook authenticates
+    #: with a CRM API key carried in the URL path. These two knobs harden that as
+    #: far as the vendor allows.
+    #:
+    #: Bolna delivers webhooks from one documented source IP. Set this and any
+    #: other source is refused before the key is even looked at. Empty means the
+    #: check is off, which is correct behind a proxy that rewrites the peer
+    #: address and wrong on a directly exposed host.
+    bolna_webhook_allowed_ips: list[str] = Field(default_factory=list)
+    #: Match an incoming call to a lead by its phone number when the payload
+    #: carries no `crm_lead_id` and the CRM did not place the call. Required for
+    #: inbound calls and for any call started from Bolna's own dashboard.
+    bolna_match_by_phone: bool = True
+    #: Create a lead when a call's number matches nothing. Goes through the same
+    #: find-or-create the intake API uses, so it cannot produce a duplicate.
+    bolna_create_missing_leads: bool = True
+
     # --- Tally form intake -------------------------------------------------
     #: Tally's optional webhook signing secret. Unset means the signature is
     #: not checked, which is the correct default: the API key is the actual

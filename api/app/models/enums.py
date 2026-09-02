@@ -31,6 +31,7 @@ __all__ = [
     "StageKind",
     "SystemActionKind",
     "TemplateChannel",
+    "VoiceCallStatus",
 ]
 
 
@@ -299,3 +300,22 @@ class IntakeOutcome(enum.StrEnum):
     #: Matched an existing lead and `dedupe` said to leave it alone.
     SKIPPED = "SKIPPED"
     REJECTED = "REJECTED"
+
+
+class VoiceCallStatus(enum.StrEnum):
+    """Where one Bolna call attempt has got to, from the CRM's point of view.
+
+    Deliberately short and *ours*. Bolna's own vocabulary is richer and is kept
+    verbatim in `voice_call_executions.bolna_status` — a vendor is entitled to
+    add statuses, and mapping theirs into ours lossily would lose the diagnosis
+    while pretending to be authoritative.
+    """
+
+    #: Row written, not yet sent. A crash here leaves something to retry.
+    QUEUED = "QUEUED"
+    #: Bolna accepted it and returned an `execution_id`.
+    DISPATCHED = "DISPATCHED"
+    #: A terminal webhook arrived and was written back. Never reprocessed.
+    COMPLETED = "COMPLETED"
+    #: Bolna refused it, was unreachable, or the call ended without a summary.
+    FAILED = "FAILED"

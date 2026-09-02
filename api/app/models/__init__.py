@@ -38,6 +38,7 @@ from app.models.enums import (
     StageKind,
     SystemActionKind,
     TemplateChannel,
+    VoiceCallStatus,
 )
 from app.models.field import (
     ActionField,
@@ -65,6 +66,8 @@ from app.models.permission import TemplateFieldGrant, TemplateLeadView
 from app.models.pipeline import CallDisposition, LostReason, Stage
 from app.models.user import PasswordResetToken, RefreshToken, User
 from app.models.view import SavedFilter, TableLayout
+from app.models.voice import VoiceCallContext, VoiceCallExecution
+from app.models.voice_mapping import VoiceExtractionMapping
 from app.models.work import ImportJob, Label, LeadLabel, Task
 from app.models.workspace import (
     AvailabilityLog,
@@ -132,6 +135,10 @@ __all__ = [
     "TenantModel",
     "TimestampMixin",
     "User",
+    "VoiceCallContext",
+    "VoiceCallExecution",
+    "VoiceCallStatus",
+    "VoiceExtractionMapping",
     "WebhookEndpoint",
     "Workspace",
 ]

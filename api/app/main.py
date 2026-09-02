@@ -38,6 +38,8 @@ from app.routers import reports as reports_router
 from app.routers import routing as routing_router
 from app.routers import tally as tally_router
 from app.routers import views as views_router
+from app.routers import voice as voice_router
+from app.routers import voice_mappings as voice_mappings_router
 from app.routers import work as work_router
 from app.routers import workspaces as workspaces_router
 from app.services.health import HealthService
@@ -153,6 +155,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(routing_router.router, prefix=tenant_prefix)
     app.include_router(integrations_router.router, prefix=tenant_prefix)
     app.include_router(reports_router.router, prefix=tenant_prefix)
+    # The CRM-side voice-context system (docs/09). No Bolna call happens
+    # here or anywhere downstream of it yet — see the router's docstring.
+    app.include_router(voice_router.router, prefix=tenant_prefix)
+    # Admin-managed mappings from Bolna disposition names to lead fields
+    # (docs/12). Additive: a workspace with no mappings keeps the exact
+    # pre-mapping behaviour — extracted values ride along in raw_payload
+    # and no lead field is rewritten.
+    app.include_router(voice_mappings_router.router, prefix=tenant_prefix)
+    # The Bolna completion webhook. Same tenant path (contract §5), but
+    # API-key authenticated rather than session authenticated — the caller
+    # is a service, not a member.
+    app.include_router(voice_router.executions_router, prefix=tenant_prefix)
+    # The route Bolna itself posts to. Not under the tenant prefix: the
+    # workspace comes from the key in the URL, because Bolna's agent config
+    # accepts only a bare webhook_url — no headers, no signature.
+    app.include_router(voice_router.bolna_router, prefix=resolved.api_v1_prefix)
     # Unscoped by path: the workspace comes from the API key, not the URL.
     app.include_router(intake_router.router, prefix=resolved.api_v1_prefix)
     # The Tally form webhook. A thin adapter in front of the same

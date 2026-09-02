@@ -21,6 +21,7 @@ import { ScheduledReportsPage } from '@/routes/ScheduledReportsPage'
 import { SystemStatusPage } from '@/routes/SystemStatusPage'
 import { TasksPage } from '@/routes/TasksPage'
 import { TemplatesPage } from '@/routes/TemplatesPage'
+import { VoiceExtractionSettingsPage } from '@/routes/VoiceExtractionSettingsPage'
 import { WorkspacePickerPage } from '@/routes/WorkspacePickerPage'
 
 export const router = createBrowserRouter([
@@ -58,6 +59,7 @@ export const router = createBrowserRouter([
       { path: 'settings/assignment', element: <AssignmentSettingsPage /> },
       { path: 'settings/scheduled-reports', element: <ScheduledReportsPage /> },
       { path: 'settings/integrations', element: <IntegrationsPage /> },
+      { path: 'settings/voice-extraction', element: <VoiceExtractionSettingsPage /> },
       { path: 'settings/dashboards', element: <DashboardSettingsPage /> },
       { path: 'status', element: <SystemStatusPage /> },
     ],

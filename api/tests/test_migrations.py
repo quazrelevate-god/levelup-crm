@@ -56,6 +56,18 @@ EXPECTED_REVISIONS = [
     # forbids.
     "0010_m9_dashboards",
     "0011_m11_credentials",
+    # Not an M-numbered milestone: the CRM-side voice-context system
+    # (docs/09-context-continuity-and-bolna-integration.md), built ahead
+    # of the actual Bolna wiring.
+    "0012_voice_context",
+    # Phase 2: the CRM↔Bolna join table, one row per call attempt.
+    "0013_voice_executions",
+    # Phase 3: keep the raw Bolna body, so the payload shape is
+    # evidence rather than assumption.
+    "0014_voice_raw_payload",
+    # Phase 4: the configurable extraction layer (docs/12) — Bolna
+    # disposition names mapped to lead fields, with a confidence gate.
+    "0015_voice_extraction_mappings",
 ]
 
 
@@ -156,6 +168,12 @@ async def test_no_enum_in_the_database_encodes_business_taxonomy(
         # anything a customer would recognise as their vocabulary.
         "outbox_status",
         "intake_outcome",
+        # Phase 2 — where one Bolna call attempt has got to: written, sent,
+        # written back, or failed. The product's own call-dispatch lifecycle.
+        # Bolna's much richer status vocabulary is deliberately *not* here: it
+        # is kept verbatim in a text column, because a vendor's words are not
+        # ours to freeze into the schema either.
+        "voice_call_status",
     }
 
     # And the harder check: no enum *value* anywhere names a business concept.
