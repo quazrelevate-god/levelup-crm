@@ -57,6 +57,7 @@ from app.schemas.voice import (
 from app.services.leads import LeadService
 from app.services.voice_calls import VoiceCallService
 from app.services.voice_context import VoiceContext, VoiceContextService
+from app.services.voice_postcall import CallSummarizer
 from app.tenancy.scoping import WorkspaceScope, require_workspace
 
 router = APIRouter(tags=["voice"])
@@ -144,6 +145,19 @@ def bolna_client(request: Request) -> BolnaClient | None:
     if config is None:
         return None
     return HttpxBolnaClient(config)
+
+
+def call_summarizer(request: Request) -> CallSummarizer | None:
+    """`app.state.call_summarizer` when a test installs one; else the default.
+
+    `None` means `VoiceCallService` uses `VendorCallSummarizer` — Bolna's own
+    LLM summary. Same override seam as `bolna_client`.
+    """
+    override = getattr(request.app.state, "call_summarizer", None)
+    if override is not None:
+        summarizer: CallSummarizer = override
+        return summarizer
+    return None
 
 
 async def _voice_call_service(
@@ -395,6 +409,7 @@ async def _process_execution(
         actor_id=None,
         match_by_phone=settings.bolna_match_by_phone,
         create_missing_leads=settings.bolna_create_missing_leads,
+        summarizer=call_summarizer(request),
     )
     outcome = await service.handle_execution(payload)
     return VoiceExecutionResult(
@@ -408,6 +423,10 @@ async def _process_execution(
         extraction_written=list(outcome.extraction.written),
         extraction_noted=list(outcome.extraction.noted),
         extraction_unmapped=list(outcome.extraction.unmapped),
+        call_summary=outcome.call_summary,
+        summary_source=outcome.summary_source,
+        call_log_id=outcome.call_log_id,
+        call_id=outcome.call_id,
     )
 
 

@@ -25,6 +25,7 @@ the ones worth exporting.
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from collections.abc import MutableMapping
 from contextvars import ContextVar
@@ -75,6 +76,34 @@ def _add_context(
     return event
 
 
+#: URL paths that carry a credential as a path segment. Bolna's agent config
+#: accepts only a bare `webhook_url`, so its webhook authenticates with a CRM
+#: API key *in the path* (`routers/voice.py::receive_bolna_webhook`). Anything
+#: that logs a path must pass it through `redact_path` first.
+_SECRET_PATH_RE = re.compile(r"(/voice/bolna/)[^/?#\s]+")
+REDACTED = "<redacted>"
+
+
+def redact_path(path: Any) -> Any:
+    """`path` with any credential-bearing segment replaced. Non-str untouched."""
+    if not isinstance(path, str):
+        return path
+    return _SECRET_PATH_RE.sub(lambda match: match.group(1) + REDACTED, path)
+
+
+class _RedactAccessLog(logging.Filter):
+    """Keep the webhook key out of uvicorn's access log.
+
+    Uvicorn logs `"%s - "%s %s HTTP/%s" %d"` with the full path as the third
+    argument — which, for the Bolna webhook, is the API key.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(redact_path(arg) for arg in record.args)
+        return True
+
+
 def configure_logging(settings: Settings) -> None:
     """JSON in deployment, human-readable locally.
 
@@ -83,6 +112,9 @@ def configure_logging(settings: Settings) -> None:
     """
     level = getattr(logging, settings.log_level.upper(), logging.INFO)
     logging.basicConfig(format="%(message)s", level=level, force=True)
+    access = logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, _RedactAccessLog) for f in access.filters):
+        access.addFilter(_RedactAccessLog())
 
     renderer: Any = (
         structlog.dev.ConsoleRenderer()
@@ -125,8 +157,17 @@ def configure_sentry(settings: Settings) -> bool:
         # Bodies can carry a customer's lead data, and an error report is not a
         # place for it. The request id is enough to find the rest.
         send_default_pii=False,
+        before_send=_redact_sentry_event,
     )
     return True
+
+
+def _redact_sentry_event(event: Any, hint: Any) -> Any:
+    """Sentry records the request URL even without PII — redact the key in it."""
+    request = event.get("request") if isinstance(event, dict) else None
+    if isinstance(request, dict) and "url" in request:
+        request["url"] = redact_path(request["url"])
+    return event
 
 
 class _Metrics:
@@ -251,7 +292,7 @@ class ObservabilityMiddleware:
             structlog.get_logger("api.request").info(
                 "request",
                 method=scope.get("method"),
-                path=scope.get("path"),
+                path=redact_path(scope.get("path")),
                 route=template,
                 status=status_code,
                 duration_ms=round(elapsed * 1000, 2),

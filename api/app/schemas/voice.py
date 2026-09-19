@@ -20,7 +20,7 @@ import datetime as dt
 import uuid
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 __all__ = [
     "VoiceCallTrigger",
@@ -150,16 +150,40 @@ class VoiceExecutionWebhook(BaseModel):
     execution_id: str | None = Field(default=None, max_length=120)
     id: str | None = Field(default=None, max_length=120)
     agent_id: str | None = Field(default=None, max_length=120)
-    status: str | None = Field(default=None, max_length=60)
-    #: A summary supplied directly by the caller. The simplest and most explicit
-    #: path, and the one the CRM prefers over digging through `extracted_data`.
-    summary: str | None = Field(default=None, max_length=4_000)
-    transcript: str | None = None
+    status: str | None = None
+    #: A summary supplied directly by the caller, or Bolna's own LLM summary
+    #: when summarisation is enabled on the agent. Unbounded here and capped by
+    #: the summariser: a long vendor summary must not 422 the whole call.
+    summary: str | None = None
+    #: Usually a string; tolerated as a list of turns (see `voice_postcall`).
+    transcript: str | list[Any] | None = None
     #: Keyed by disposition name, exactly as Bolna emits it (contract §5).
     extracted_data: dict[str, Any] = Field(default_factory=dict)
     #: Carries the reserved `crm_*` keys the trigger put there.
     user_data: dict[str, Any] = Field(default_factory=dict)
     context_details: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("extracted_data", "user_data", "context_details", mode="before")
+    @classmethod
+    def _null_is_empty(cls, value: Any) -> Any:
+        """Bolna sends `null` for these until a call completes.
+
+        Rejecting that would 422 every in-progress status delivery, so an
+        absent or non-object value is read as "nothing yet".
+        """
+        return value if isinstance(value, dict) else {}
+
+    @field_validator("status", "summary", mode="before")
+    @classmethod
+    def _text_or_none(cls, value: Any) -> Any:
+        if value is None or isinstance(value, str):
+            return value
+        return None
+
+    @field_validator("status", mode="after")
+    @classmethod
+    def _bounded_status(cls, value: str | None) -> str | None:
+        return value[:60] if value else value
 
     def resolved_execution_id(self) -> str | None:
         return self.execution_id or self.id
@@ -193,3 +217,11 @@ class VoiceExecutionResult(BaseModel):
     #: mapping exists. Useful for the operator setting mappings up: what
     #: extractions Bolna is producing that nothing is listening for.
     extraction_unmapped: list[str] = Field(default_factory=list)
+    #: Post-call automation. The text the timeline's AI Call entry shows, and
+    #: whether it is the AI summary (`AI`) or the safe placeholder (`FALLBACK`).
+    #: Null on `pending` deliveries.
+    call_summary: str | None = None
+    summary_source: str | None = None
+    #: The `CALL_LOGGED` action this call produced, and the CRM's own row id.
+    call_log_id: uuid.UUID | None = None
+    call_id: uuid.UUID | None = None

@@ -150,9 +150,11 @@ class Settings(BaseSettings):
     #: carries no `crm_lead_id` and the CRM did not place the call. Required for
     #: inbound calls and for any call started from Bolna's own dashboard.
     bolna_match_by_phone: bool = True
-    #: Create a lead when a call's number matches nothing. Goes through the same
-    #: find-or-create the intake API uses, so it cannot produce a duplicate.
-    bolna_create_missing_leads: bool = True
+    #: Create a lead when a call's number matches nothing. **Off by default**:
+    #: an unmatched post-call webhook is refused with a logged reference rather
+    #: than inventing a customer record. Only honoured when the workspace's
+    #: identity field is its phone field; goes through the one create path.
+    bolna_create_missing_leads: bool = False
 
     # --- Tally form intake -------------------------------------------------
     #: Tally's optional webhook signing secret. Unset means the signature is

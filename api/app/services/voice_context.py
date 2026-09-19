@@ -137,7 +137,7 @@ class VoiceContextService:
 
     # --- reads -----------------------------------------------------------
 
-    async def _phone_field_key(self) -> str | None:
+    async def phone_field_key(self) -> str | None:
         """The key of the field holding the number a call should dial.
 
         **Deliberately not the identity field.** A workspace designates any
@@ -191,7 +191,7 @@ class VoiceContextService:
         """
         projected = await self._leads.project(lead)
         voice_row = await self._voice_row(lead.id)
-        phone_key = await self._phone_field_key()
+        phone_key = await self.phone_field_key()
 
         stage_name: str | None = None
         if lead.stage_id is not None:
@@ -224,7 +224,7 @@ class VoiceContextService:
             # away, but conceivably archived) degrades to None, not an error.
             name=values.get("name"),
             # The number to *dial*, which is not the same question as how the
-            # workspace identifies a lead. See `_phone_field_key`.
+            # workspace identifies a lead. See `phone_field_key`.
             phone=values.get(phone_key) if phone_key else None,
             email=values.get("email"),
             stage_id=lead.stage_id,
@@ -261,6 +261,7 @@ class VoiceContextService:
         *,
         summary: str,
         external_id: str | None = None,
+        record_note: bool = True,
     ) -> tuple[VoiceCallContext, bool]:
         """Record the digest of the latest call. Idempotent on `external_id`.
 
@@ -279,6 +280,10 @@ class VoiceContextService:
         scope for this CRM-only milestone, which must work against a bare
         workspace. Swapping this for the `CUSTOM` shape is one of the changes
         the real Bolna wiring will make.
+
+        `record_note=False` is for the post-call webhook, whose `CALL_LOGGED`
+        action already carries the summary as its body. Writing the NOTE too
+        would print the same paragraph twice under one call.
         """
         existing = await self._voice_row(lead.id)
         if (
@@ -300,12 +305,13 @@ class VoiceContextService:
         row.last_call_external_id = external_id
         row.call_count = (row.call_count or 0) + 1
 
-        writer = ActionWriter(self._session, actor_id=self._actor_id)
-        await writer.open_changeset(
-            source=ChangesetSource.AUTOMATION,
-            summary=f"Voice call summary recorded for {lead.identity_value}",
-        )
-        writer.record_note(lead, body=summary)
+        if record_note:
+            writer = ActionWriter(self._session, actor_id=self._actor_id)
+            await writer.open_changeset(
+                source=ChangesetSource.AUTOMATION,
+                summary=f"Voice call summary recorded for {lead.identity_value}",
+            )
+            writer.record_note(lead, body=summary)
 
         await self._session.flush()
         return row, True

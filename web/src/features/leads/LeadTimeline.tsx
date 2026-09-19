@@ -52,6 +52,29 @@ function renderValue(value: unknown): string {
   return toDisplayStringOr(value)
 }
 
+/**
+ * A call the Bolna voice agent made, logged by the post-call webhook. Same
+ * `CALL_LOGGED` kind as a human's log — reports count both — told apart only by
+ * `payload.source`, which the server sets and a person's log never carries.
+ */
+function isAiCall(action: LeadAction): boolean {
+  return action.kind === 'CALL_LOGGED' && action.payload.source === 'AI_CALL'
+}
+
+/** `154` → `2m 34s`. */
+function formatDuration(value: unknown): string {
+  const total = Math.max(0, Math.round(Number(value) || 0))
+  const minutes = Math.floor(total / 60)
+  const seconds = total % 60
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`
+}
+
+/** Bolna's status string, for people: `no-answer` → `No answer`. */
+function formatCallStatus(value: unknown): string {
+  const text = toDisplayStringOr(value, 'unknown').replace(/[-_]/g, ' ')
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
 export function LeadTimeline({
   actions,
   stages,
@@ -114,6 +137,23 @@ export function LeadTimeline({
               : 'Unassigned'}
           </span>
         </>
+      )
+    }
+    if (isAiCall(action)) {
+      const disposition = dispositions.find((entry) => entry.id === payload.disposition_id)
+      return (
+        <div className="space-y-1" data-testid="ai-call-entry">
+          <p className="text-muted-foreground text-xs">
+            Made by AI Call · Call data received
+            {payload.summary_source === 'FALLBACK' ? ' · no automatic summary' : ''}
+          </p>
+          {action.body ? <p className="whitespace-pre-wrap">{action.body}</p> : null}
+          <p className="text-muted-foreground text-xs">
+            Duration: {formatDuration(payload.duration_seconds)} · Status:{' '}
+            {formatCallStatus(payload.call_status)}
+            {disposition ? ` · ${disposition.label}` : ''}
+          </p>
+        </div>
       )
     }
     if (action.kind === 'CALL_LOGGED') {
@@ -186,9 +226,12 @@ export function LeadTimeline({
               data-testid="timeline-entry"
             >
               <div className="mb-1 flex flex-wrap items-center gap-2">
-                <Badge variant="outline">{KIND_LABELS[action.kind] ?? action.kind}</Badge>
+                <Badge variant="outline">
+                  {isAiCall(action) ? '🤖 AI Call' : (KIND_LABELS[action.kind] ?? action.kind)}
+                </Badge>
                 <span className="text-muted-foreground text-xs">
-                  {new Date(action.performed_at).toLocaleString()} · {memberName(action.actor_id)}
+                  {new Date(action.performed_at).toLocaleString()} ·{' '}
+                  {isAiCall(action) ? 'AI Call' : memberName(action.actor_id)}
                 </span>
                 {action.score_applied !== 0 ? (
                   <Badge variant={action.score_applied > 0 ? 'success' : 'destructive'}>

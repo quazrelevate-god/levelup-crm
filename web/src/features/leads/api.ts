@@ -7,6 +7,7 @@
  * server returns.
  */
 
+import { useCallback } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api } from '@/api/client'
@@ -49,10 +50,20 @@ export function useLead(workspaceId: string, leadId: string | null) {
   })
 }
 
-export function useLeadTimeline(workspaceId: string, leadId: string | null) {
+/**
+ * `refetchInterval` is for one case: an AI call has been started and its result
+ * arrives later, on Bolna's webhook, with nothing to push it to the browser.
+ * The detail panel polls while it waits and stops once the call is logged.
+ */
+export function useLeadTimeline(
+  workspaceId: string,
+  leadId: string | null,
+  options: { readonly refetchInterval?: number | false } = {},
+) {
   return useQuery({
     queryKey: timelineKey(workspaceId, leadId ?? ''),
     enabled: leadId !== null,
+    refetchInterval: options.refetchInterval ?? false,
     queryFn: () =>
       api.get<Page<LeadAction>>(`${base(workspaceId)}/leads/${leadId as string}/actions`, {
         query: { limit: 100 },
@@ -246,6 +257,21 @@ export function useRenderTemplate(workspaceId: string) {
  * the lead or its timeline. The write-back arrives later on Bolna's completion
  * webhook, and invalidating now would only refetch unchanged rows.
  */
+export function useRefreshLeadData(workspaceId: string) {
+  const queryClient = useQueryClient()
+  // After an AI call is logged: extraction write-back may have corrected a
+  // field, so the list and the open lead must re-read, not just the timeline.
+  return useCallback(
+    () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: leadsKey(workspaceId) }),
+        queryClient.invalidateQueries({ queryKey: ['lead-search', workspaceId] }),
+        queryClient.invalidateQueries({ queryKey: ['changesets', workspaceId] }),
+      ]),
+    [queryClient, workspaceId],
+  )
+}
+
 export function useTriggerVoiceCall(workspaceId: string) {
   return useMutation({
     mutationFn: (body: VoiceCallTrigger) =>

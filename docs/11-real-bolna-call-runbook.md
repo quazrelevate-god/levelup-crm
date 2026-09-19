@@ -5,6 +5,14 @@ things you edit, and none of them ever go into source.
 
 Assumes `docs/10` is in place and migrations run through **`0014_voice_raw_payload`**.
 
+> **Post-call automation** (summary → one 🤖 AI Call timeline entry,
+> matching and idempotency rules, fallback text) is documented in
+> **`docs/13-post-call-automation.md`** and needs migration
+> **`0016_voice_post_call`**. Since then a completed call writes *one*
+> `CALL_LOGGED` entry whose body is the summary — no separate NOTE — and an
+> unmatched number no longer creates a lead unless
+> `BOLNA_CREATE_MISSING_LEADS=true`.
+
 ---
 
 ## 0. One-time setup
@@ -275,8 +283,8 @@ docker compose exec -T postgres psql -U crm -d crm -c `
 | `ERROR: unknown version '3'` from ngrok | Old ngrok config. Not an app problem: `& $ngrok config upgrade`, or delete `%LOCALAPPDATA%\ngrok\ngrok.yml` and re-add your authtoken. |
 | Webhook 401 | Wrong or revoked key in the URL, or the URL was built before `$key` was set. |
 | Webhook 404 | `BOLNA_WEBHOOK_ALLOWED_IPS` is set and the source did not match. Behind ngrok the peer is the tunnel, so leave it empty locally. |
-| Webhook 422 `unknown_execution` | No `crm_lead_id` and no usable phone number. Check `raw_payload` for where the number really is. |
-| Lead created with a blank name | Expected. Bolna sent no name and the CRM will not invent one. |
+| Webhook 422 `unknown_execution` | Not matched to exactly one lead: no execution row, no `crm_lead_id`, and the number matched no lead (or several). The response's `reference` is in the API log. |
+| AI Call entry says "automatic summary was not available" | Summarisation is not enabled on the Bolna agent. See docs/13 §8. |
 | Duplicate leads | Should be impossible — `leads_identity_uq`. If it happens, the two numbers normalised differently; check the workspace's `default_country_code`. |
 | Everything works, tunnel dies overnight | ngrok URLs are ephemeral. Re-run steps 3–5. Nothing in the codebase remembers the URL, by design. |
 

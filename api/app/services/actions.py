@@ -323,22 +323,31 @@ class ActionWriter:
         disposition_id: uuid.UUID,
         duration_seconds: int,
         notes: str | None = None,
+        extra: Mapping[str, Any] | None = None,
     ) -> Action:
-        """A manually logged call.
+        """A logged call.
 
         There is no telephony in v1 (CLAUDE.md): this records what a human says
         happened. Nothing here implies a provider, and there is deliberately no
         provider interface to "fill in later".
+
+        `extra` is additive payload for a call logged by an integration rather
+        than a person — the voice webhook uses it to mark `source: AI_CALL` and
+        carry the execution id. It cannot overwrite the four core keys.
         """
-        return self._append(
-            lead,
-            kind=SystemActionKind.CALL_LOGGED,
-            payload={
+        payload: dict[str, Any] = dict(extra or {})
+        payload.update(
+            {
                 "direction": direction,
                 "disposition_id": str(disposition_id),
                 "duration_seconds": duration_seconds,
                 "notes": notes,
-            },
+            }
+        )
+        return self._append(
+            lead,
+            kind=SystemActionKind.CALL_LOGGED,
+            payload=payload,
             body=notes,
         )
 

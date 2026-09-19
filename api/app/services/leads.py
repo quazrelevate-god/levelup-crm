@@ -157,8 +157,16 @@ class LeadService:
         country code), so matching against the raw string would miss every
         existing lead and turn an update into a duplicate.
         """
+        return await self.normalise_field_value(await self._identity_key(), raw)
+
+    async def normalise_field_value(self, key: str, raw: str) -> str | None:
+        """Normalise `raw` exactly as the write path would store it in `key`.
+
+        `normalise_identity` is this, for the identity field. The voice webhook
+        needs it for the *phone* field, which is not the identity in a
+        workspace that identifies leads by name.
+        """
         validator = await self._load_schema()
-        key = await self._identity_key()
         try:
             validated = validator.validate({key: raw}, is_create=False)
         except FieldValidationError:

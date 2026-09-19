@@ -68,6 +68,9 @@ EXPECTED_REVISIONS = [
     # Phase 4: the configurable extraction layer (docs/12) — Bolna
     # disposition names mapped to lead fields, with a confidence gate.
     "0015_voice_extraction_mappings",
+    # Post-call automation (docs/13): each call's transcript, duration,
+    # summary and call-log link on its execution row.
+    "0016_voice_post_call",
 ]
 
 

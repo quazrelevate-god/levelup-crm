@@ -172,6 +172,24 @@ class VoiceCallExecution(TenantModel):
     #: every later delivery for this execution is a duplicate.
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    # --- post-call outcome (migration 0016) ---------------------------------
+    #: The conversation as Bolna reported it. Per call, unlike `raw_payload`
+    #: (overwritten per delivery) and `last_call_summary` (overwritten per call).
+    transcript: Mapped[str | None] = mapped_column(Text())
+    duration_seconds: Mapped[int | None] = mapped_column(Integer)
+    #: Exactly the text the timeline's AI Call entry shows.
+    summary: Mapped[str | None] = mapped_column(Text())
+    #: `AI` when the summariser produced it, `FALLBACK` when it is the safe
+    #: placeholder. Never inferred from the text.
+    summary_source: Mapped[str | None] = mapped_column(String(20))
+    #: Why the summary is a fallback: `summarizer_failed: <ExceptionType>` or
+    #: `summary_unavailable`. Never an exception message or payload text.
+    summary_error: Mapped[str | None] = mapped_column(Text())
+    #: When the most recent delivery for this execution arrived.
+    webhook_received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: The `CALL_LOGGED` action this call produced on the lead's timeline.
+    call_action_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+
     lead = relationship("Lead")
 
     __table_args__ = (

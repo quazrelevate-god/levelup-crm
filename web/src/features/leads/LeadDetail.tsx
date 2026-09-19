@@ -44,12 +44,18 @@ import {
   useLogCustomAction,
   useRecordMessage,
   useRenderTemplate,
+  useRefreshLeadData,
   useTriggerVoiceCall,
   useUpdateLead,
 } from '@/features/leads/api'
 import { LeadTimeline } from '@/features/leads/LeadTimeline'
 import { LeadLabels } from '@/features/work/LeadLabels'
 import { LeadTasks } from '@/features/work/LeadTasks'
+
+/** How often the timeline re-reads while an AI call's result is pending. */
+const AI_CALL_POLL_MS = 5_000
+/** Longest a call plus Bolna's post-processing plausibly takes. */
+const AI_CALL_POLL_LIMIT_MS = 15 * 60 * 1_000
 
 interface LeadDetailProps {
   readonly workspaceId: string
@@ -112,8 +118,17 @@ export function LeadDetail({
   // Kept separate from `error` so a started call reads as a success rather
   // than sharing the panel's red alert line.
   const [voiceNotice, setVoiceNotice] = useState<string | null>(null)
+  // The Bolna execution this panel is waiting on. Its result arrives on a
+  // webhook minutes later, so the timeline polls until that call is logged.
+  const [awaitingExecution, setAwaitingExecution] = useState<{
+    readonly id: string
+    readonly startedAt: number
+  } | null>(null)
 
-  const timeline = useLeadTimeline(workspaceId, lead.id)
+  const timeline = useLeadTimeline(workspaceId, lead.id, {
+    refetchInterval: awaitingExecution ? AI_CALL_POLL_MS : false,
+  })
+  const refreshLeadData = useRefreshLeadData(workspaceId)
   const actionFieldTypes = useActionFieldTypes(workspaceId)
   const updateLead = useUpdateLead(workspaceId)
   const addNote = useAddNote(workspaceId)
@@ -130,7 +145,26 @@ export function LeadDetail({
     setError(null)
     setRendered(null)
     setVoiceNotice(null)
+    setAwaitingExecution(null)
   }, [lead.id])
+
+  // Stop polling once this call's AI Call log is on the timeline, or give up
+  // after a bound — a call Bolna never reports must not poll forever.
+  useEffect(() => {
+    if (!awaitingExecution) return
+    const landed = (timeline.data?.items ?? []).some(
+      (action) =>
+        action.kind === 'CALL_LOGGED' && action.payload.execution_id === awaitingExecution.id,
+    )
+    if (landed) {
+      setAwaitingExecution(null)
+      setVoiceNotice('AI call finished · summary added to the timeline')
+      void refreshLeadData()
+    } else if (Date.now() - awaitingExecution.startedAt > AI_CALL_POLL_LIMIT_MS) {
+      setAwaitingExecution(null)
+      setVoiceNotice('AI call started · the result will appear here once Bolna reports it')
+    }
+  }, [awaitingExecution, timeline.data, timeline.dataUpdatedAt, refreshLeadData])
 
   const rendererFor = (field: LeadField) =>
     fieldTypes.find((spec) => spec.key === field.field_type)?.renderer
@@ -178,8 +212,10 @@ export function LeadDetail({
       }
       setVoiceNotice(
         `AI call started · ${result.bolna_status ?? result.status}` +
-          (result.call_count > 0 ? ` · call ${result.call_count + 1} for this lead` : ''),
+          (result.call_count > 0 ? ` · call ${result.call_count + 1} for this lead` : '') +
+          ' · waiting for the result…',
       )
+      setAwaitingExecution({ id: result.execution_id, startedAt: Date.now() })
     } catch (cause) {
       setError(message(cause))
     }

@@ -25,12 +25,17 @@ template cannot View is absent from the payload Bolna receives — not redacted,
 absent, exactly as contract §3 requires. This module never touches
 `lead.values` directly.
 
-**The webhook identifies the lead by execution id, never by phone.** Contract §5
-is explicit: "never fall back to matching on phone number, which would let a
-spoofed payload write to an arbitrary lead." `voice_call_executions` is the
-authoritative mapping; a payload whose execution we did not create must carry a
-`crm_lead_id` that resolves *inside the authenticated workspace*, or it is
-refused.
+**The webhook identifies the lead by execution id first.** `voice_call_executions`
+is the authoritative mapping; then `crm_lead_id` resolved inside the
+authenticated workspace; then, if enabled, an *unambiguous* match on the
+workspace's phone field. Never by name, and an unmatched delivery never creates
+a lead unless `BOLNA_CREATE_MISSING_LEADS` is explicitly on (see
+`_lead_for_payload`).
+
+**Post-call automation** (docs/13): the terminal delivery is normalised
+(`voice_postcall.normalise_execution`), summarised by Bolna's own LLM summary
+with a safe fallback, and written as exactly one `CALL_LOGGED` action marked
+`source: AI_CALL` whose body is that summary.
 
 **Write-back is idempotent at two levels.** `voice_call_executions.completed_at`
 gates the whole operation, and `VoiceContextService.update_last_call_summary` is
@@ -43,6 +48,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import logging
 import uuid
 from typing import Any
 
@@ -60,7 +66,25 @@ from app.services.actions import ActionWriter
 from app.services.leads import LeadService
 from app.services.voice_context import VoiceContext, VoiceContextService
 from app.services.voice_extraction import ExtractionOutcome, VoiceExtractionService
+from app.services.voice_postcall import (
+    CALLER_PHONE_PATHS,
+    DIRECTION_PATHS,
+    DURATION_PATHS,
+    PHONE_PATHS,
+    SUMMARY_SOURCE_AI,
+    TERMINAL_FAILURE_STATUSES,
+    TERMINAL_SUCCESS_STATUSES,
+    CallSummarizer,
+    NormalizedCallResult,
+    VendorCallSummarizer,
+    dig,
+    first_present,
+    normalise_execution,
+    summarize_call,
+)
 from app.tenancy.session import ScopedSession
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "PHONE_PATHS",
@@ -77,71 +101,24 @@ __all__ = [
 #: never collide with a customer's own field keys.
 RESERVED_PREFIX = "crm_"
 
-#: Bolna's own vocabulary (`.claude/skills/get-executions/SKILL.md`), kept as
-#: *their* strings rather than mapped into a CRM enum — a vendor is entitled to
-#: add statuses, and a lossy mapping loses the diagnosis.
-TERMINAL_SUCCESS_STATUSES = frozenset({"completed"})
-TERMINAL_FAILURE_STATUSES = frozenset(
-    {
-        "failed",
-        "error",
-        "busy",
-        "no-answer",
-        "no_answer",
-        "canceled",
-        "cancelled",
-        "stopped",
-        "balance-low",
-        "call-disconnected",
-    }
-)
-
-#: Where a customer's phone number might be in a Bolna execution payload.
-#:
-#: Read in order, first hit wins. Several spellings rather than one because the
-#: vendored skills describe `telephony_data` only in prose — "provider, to/from
-#: numbers, call type" — and the field-level reference they link is not in this
-#: repo. Guessing one name and getting it wrong would silently fail to match a
-#: lead; reading the plausible set and storing `raw_payload` alongside means the
-#: first real call tells us which is right instead of us assuming.
-PHONE_PATHS: tuple[tuple[str, ...], ...] = (
-    ("telephony_data", "to_number"),
-    ("telephony_data", "recipient_phone_number"),
-    ("telephony_data", "to"),
-    ("telephony_data", "recipient"),
-    ("recipient_phone_number",),
-    ("to_number",),
-    ("context_details", "recipient_phone_number"),
-)
-
-#: Same reasoning, for the caller's number on an inbound call.
-CALLER_PHONE_PATHS: tuple[tuple[str, ...], ...] = (
-    ("telephony_data", "from_number"),
-    ("telephony_data", "from"),
-    ("from_number",),
-)
-
-#: Same reasoning, for how long the two parties actually spoke. `get-executions`
-#: names `conversation_time` at the top level; the rest are defensive.
-DURATION_PATHS: tuple[tuple[str, ...], ...] = (
-    ("conversation_time",),
-    ("telephony_data", "duration"),
-    ("telephony_data", "call_duration"),
-    ("duration_seconds",),
-    ("duration",),
-)
-
-#: And for which way the call went.
-DIRECTION_PATHS: tuple[tuple[str, ...], ...] = (
-    ("telephony_data", "call_type"),
-    ("telephony_data", "direction"),
-    ("direction",),
-    ("call_type",),
-)
+#: The payload readers and status vocabulary live in `voice_postcall`, where
+#: the normaliser uses them; re-exported here because existing callers and
+#: tests import them from this module.
+__all__ += [
+    "CALLER_PHONE_PATHS",
+    "DIRECTION_PATHS",
+    "DURATION_PATHS",
+    "dig",
+    "first_present",
+]
 
 #: `CallLogCreate.direction` — the CRM's own three values.
 DIRECTION_OUTGOING = "OUTGOING"
 DIRECTION_INCOMING = "INCOMING"
+
+#: `CALL_LOGGED.payload.source` for a call the Bolna agent made. The timeline
+#: renders these as "AI Call"; a human-logged call has no `source` key.
+AI_CALL_SOURCE = "AI_CALL"
 
 #: Bolna's terminal status -> the label of one of the **product's own** system
 #: call dispositions (`app/services/provisioning.py::_SYSTEM_DISPOSITIONS`).
@@ -164,26 +141,6 @@ STATUS_DISPOSITION_LABELS: dict[str, str] = {
     "stopped": "No Answer",
     "balance-low": "No Answer",
 }
-
-
-def dig(payload: dict[str, Any], path: tuple[str, ...]) -> Any:
-    """Follow a dotted path through nested dicts, or return None."""
-    current: Any = payload
-    for key in path:
-        if not isinstance(current, dict):
-            return None
-        current = current.get(key)
-        if current is None:
-            return None
-    return current
-
-
-def first_present(payload: dict[str, Any], paths: tuple[tuple[str, ...], ...]) -> Any:
-    for path in paths:
-        found = dig(payload, path)
-        if found not in (None, ""):
-            return found
-    return None
 
 
 #: How many previous timeline entries ride along in the outbound payload. A
@@ -218,6 +175,12 @@ class WebhookOutcome:
     call_count: int
     last_call_summary: str | None
     extraction: ExtractionOutcome = dataclasses.field(default_factory=ExtractionOutcome)
+    #: Post-call automation: what this call's timeline entry says, where the
+    #: text came from, and which rows it produced.
+    call_summary: str | None = None
+    summary_source: str | None = None
+    call_log_id: uuid.UUID | None = None
+    call_id: uuid.UUID | None = None
 
 
 class VoiceCallService:
@@ -239,7 +202,8 @@ class VoiceCallService:
         config: BolnaSettings | None,
         actor_id: uuid.UUID | None,
         match_by_phone: bool = True,
-        create_missing_leads: bool = True,
+        create_missing_leads: bool = False,
+        summarizer: CallSummarizer | None = None,
     ) -> None:
         self._session = session
         self._workspace = workspace
@@ -248,11 +212,14 @@ class VoiceCallService:
         self._client = client
         self._config = config
         self._actor_id = actor_id
-        # Both default on because that is what an inbound call needs; both are
-        # deployment settings so a workspace that wants the stricter
-        # contract-§5 behaviour can have it without a code change.
+        # Phone matching defaults on (an inbound call has nothing else to go
+        # on); creating a lead for an unmatched call defaults *off* — a webhook
+        # that cannot be matched must never invent a customer record.
         self._match_by_phone = match_by_phone
         self._create_missing_leads = create_missing_leads
+        # Bolna's own LLM summary unless a test (or a later CRM-side model)
+        # supplies another. See `app.services.voice_postcall`.
+        self._summarizer: CallSummarizer = summarizer or VendorCallSummarizer()
 
     # --- configuration ------------------------------------------------------
 
@@ -436,50 +403,27 @@ class VoiceCallService:
 
     # --- inbound ------------------------------------------------------------
 
-    async def _execution_by_external_id(self, external_id: str) -> VoiceCallExecution | None:
-        rows = await self._session.execute(
+    async def _execution_by_external_id(
+        self, external_id: str, *, lock: bool = False
+    ) -> VoiceCallExecution | None:
+        """The execution row for a Bolna id, optionally row-locked.
+
+        The webhook locks it (`SELECT … FOR UPDATE`). Bolna retries, and two
+        deliveries of the same terminal status can arrive together; without the
+        lock both would read `completed_at IS NULL` and both would write a call
+        log. With it, the second waits, then sees the first one's
+        `completed_at` and becomes a duplicate.
+        """
+        statement = (
             self._session.select(VoiceCallExecution)
             .where(VoiceCallExecution.external_id == external_id)
             .limit(1)
         )
+        if lock:
+            statement = statement.with_for_update()
+        rows = await self._session.execute(statement)
         found: VoiceCallExecution | None = rows.scalar_one_or_none()
         return found
-
-    def _extract_summary(self, payload: VoiceExecutionWebhook) -> str | None:
-        """Find the call summary in a Bolna execution payload.
-
-        Order of preference, and why:
-
-        1. `summary` on the payload — explicit, and what an adapter in front of
-           Bolna would send.
-        2. The disposition named by `BOLNA_SUMMARY_DISPOSITION`. A disposition
-           name is the *customer's* vocabulary, so the product cannot ship a
-           guess at it (CLAUDE.md, "Known traps") — it is configuration, unset
-           by default.
-        3. `context_details.summary`, which Bolna populates for some agent
-           configurations.
-
-        Deliberately **not** the transcript. A transcript is not a summary, and
-        storing one in `last_call_summary` would quietly turn the next call's
-        prompt into a wall of text. No summary is an honest no summary.
-        """
-        if payload.summary and payload.summary.strip():
-            return payload.summary.strip()
-
-        configured = self._config.summary_disposition if self._config else None
-        if configured:
-            entry = payload.extracted_data.get(configured)
-            if isinstance(entry, dict):
-                value = entry.get("value")
-                if value not in (None, ""):
-                    return str(value).strip()
-            elif entry not in (None, ""):
-                return str(entry).strip()
-
-        detail = payload.context_details.get("summary")
-        if isinstance(detail, str) and detail.strip():
-            return detail.strip()
-        return None
 
     async def _note(self, lead: Lead, *, body: str) -> None:
         """One AUTOMATION changeset, one timeline entry (rules 5 and 5a)."""
@@ -490,67 +434,77 @@ class VoiceCallService:
         )
         writer.record_note(lead, body=body)
 
-    async def _lead_by_phone(
-        self, payload: VoiceExecutionWebhook
-    ) -> tuple[Lead | None, str | None]:
+    async def _lead_by_phone(self, call: NormalizedCallResult) -> tuple[Lead | None, str | None]:
         """Find the lead this call was with, by its phone number.
 
-        The number is normalised through `LeadService.normalise_identity`, which
-        is the *same* validator the write path uses — so a lead created by a
-        human typing `9876543210` and a Bolna payload carrying `+919876543210`
-        resolve to one record, using the workspace's own `default_country_code`
-        (architecture rule 12, never a hardcoded prefix).
+        Matches on the workspace's **phone field**, not its identity field. A
+        workspace may identify leads by Name, and comparing a phone number
+        against names never matches — which, with auto-create on, used to
+        create a lead *named* "+91…".
 
-        Tries the called number first and the calling number second, so the same
-        code serves an outbound call (the customer is `to`) and an inbound one
-        (the customer is `from`).
+        The number is normalised by the same validator the write path uses, so
+        `9876543210` typed by a person and `+919876543210` from Bolna are one
+        number under the workspace's own country code (rule 12).
+
+        **Exactly one match or nothing.** Two leads sharing a number is a real
+        state for a non-identity field, and picking one would be attaching a
+        call to a person by guesswork. Ambiguity is reported as unmatched.
+
+        Both numbers are tried, the likelier one first: the called number on
+        an outbound call, the calling number on an inbound one. The other is
+        the agent's own line, which matches no lead.
 
         Returns `(lead, normalised_number)`; either may be `None`.
         """
-        body = payload.model_dump()
-        raw = first_present(body, PHONE_PATHS) or first_present(body, CALLER_PHONE_PATHS)
-        if raw in (None, ""):
+        phone_key = await self._context.phone_field_key()
+        if phone_key is None:
             return None, None
 
-        normalised = await self._leads.normalise_identity(str(raw))
-        if normalised is None:
-            # Unparseable for this workspace. Not an error: the call still gets
-            # recorded against whatever else identifies it, and `raw_payload`
-            # keeps the number somebody can look at.
-            return None, None
+        candidates = [call.recipient_phone, call.caller_phone]
+        if call.direction == DIRECTION_INCOMING:
+            candidates.reverse()
 
-        statement = (
-            self._session.select(Lead)
-            .where(Lead.identity_value == normalised, Lead.deleted_at.is_(None))
-            .limit(1)
-        )
-        rows = await self._session.execute(statement)
-        found: Lead | None = rows.scalar_one_or_none()
-        return found, normalised
+        first_normalised: str | None = None
+        for raw in candidates:
+            if not raw:
+                continue
+            normalised = await self._leads.normalise_field_value(phone_key, raw)
+            if normalised is None:
+                continue
+            first_normalised = first_normalised or normalised
+            rows = await self._session.execute(
+                self._session.select(Lead)
+                .where(Lead.values[phone_key].astext == normalised, Lead.deleted_at.is_(None))
+                .limit(2)
+            )
+            matches: list[Lead] = list(rows.scalars().all())
+            if len(matches) == 1:
+                return matches[0], normalised
+            if len(matches) > 1:
+                # Ambiguous: refuse rather than guess, and do not try the
+                # other number — that would be picking by elimination.
+                return None, None
+        return None, first_normalised
 
-    async def _create_lead_for_call(self, phone: str, payload: VoiceExecutionWebhook) -> Lead:
-        """Create the customer this call was with, when nothing matched.
+    async def _create_lead_for_call(self, phone: str, call: NormalizedCallResult) -> Lead | None:
+        """Create the customer this call was with — only when explicitly enabled.
 
-        Goes through `LeadService.create_lead` — the one place every create in
-        this product lands (UI, import, intake API), so this inherits the
-        identity uniqueness, the assignment rules, the changeset and the
-        `LEAD_CREATED` action without reimplementing any of them. That is what
-        keeps requirement "do not create a second customer system" true: there
-        is still exactly one create path, and this is a fourth caller of it.
+        Off by default (`BOLNA_CREATE_MISSING_LEADS=false`): an unmatched
+        webhook must not invent a customer record. When a deployment does turn
+        it on, it goes through `LeadService.create_lead`, the one create path.
 
-        A racing duplicate cannot survive `leads_identity_uq`; if two webhooks
-        for the same new number arrive together, one loses and re-reads.
+        Only possible when the phone field *is* the identity. A workspace that
+        identifies leads by name cannot have one created from a number alone,
+        and writing the number into the name is the bug this replaces.
         """
+        phone_key = await self._context.phone_field_key()
         identity_key = await self._leads.identity_key()
-        values: dict[str, Any] = {identity_key: phone}
+        if phone_key is None or phone_key != identity_key:
+            return None
 
-        # A name only if Bolna actually supplied one. Never invented: a lead
-        # called "Unknown" is worse than a lead with a blank name, because it
-        # looks deliberate.
-        body = payload.model_dump()
-        candidate = first_present(
-            body, (("user_data", "customer_name"), ("context_details", "customer_name"))
-        )
+        values: dict[str, Any] = {identity_key: phone}
+        # A name only if Bolna actually supplied one. Never invented.
+        candidate = call.user_data.get("customer_name")
         if candidate:
             values["name"] = str(candidate)[:200]
 
@@ -558,45 +512,63 @@ class VoiceCallService:
         await self._session.flush()
         return lead
 
+    def _unmatched(self, call: NormalizedCallResult, *, external_id: str) -> Exception:
+        """Refuse a delivery that belongs to no lead — loudly, with a reference.
+
+        Never attached to a best guess. The log line carries a reference the
+        operator can quote, the execution id, the status and the last four
+        digits of the number: enough to find it in Bolna's dashboard, and
+        nothing that makes the log itself sensitive.
+        """
+        reference = uuid.uuid4().hex[:12]
+        number = call.recipient_phone or call.caller_phone or ""
+        logger.warning(
+            "voice.webhook unmatched reference=%s workspace=%s execution=%s status=%s phone=%s",
+            reference,
+            self._workspace.id,
+            external_id,
+            call.status or "-",
+            f"…{number[-4:]}" if number else "-",
+        )
+        return api_error(
+            422,
+            "unknown_execution",
+            "No CRM record of that execution, and the payload carries neither a "
+            f"crm_lead_id nor a phone number matching exactly one lead (reference {reference})",
+            reference=reference,
+        )
+
     async def _lead_for_payload(
-        self, payload: VoiceExecutionWebhook, *, external_id: str
+        self, call: NormalizedCallResult, *, external_id: str
     ) -> tuple[Lead, VoiceCallExecution]:
         """Resolve the lead this delivery belongs to, and its execution row.
 
-        Four ways in, tried in descending order of certainty:
+        In descending order of certainty:
 
-        1. **The execution row this CRM created** when it triggered the call.
-           Strongest: the CRM itself recorded which lead this execution is for.
-        2. **`crm_lead_id` in `user_data`**, resolved through `LeadService` and
-           therefore inside the authenticated workspace by construction
-           (contract §5). Covers §7's "webhook arrives before the trigger
-           commits".
-        3. **The phone number**, when `BOLNA_MATCH_BY_PHONE` is on.
-        4. **A newly created lead**, when `BOLNA_CREATE_MISSING_LEADS` is on.
+        1. **The execution row this CRM created** when it triggered the call —
+           the CRM itself recorded which lead this execution is for.
+        2. **`crm_lead_id`**, from `user_data` or from Bolna's echo of it in
+           `context_details.recipient_data`. Resolved through `LeadService`, so
+           only inside the authenticated workspace (contract §5). Covers §7's
+           "webhook arrives before the trigger commits".
+        3. **The phone field**, when `BOLNA_MATCH_BY_PHONE` is on, and only on
+           an unambiguous match. Safe because every request here has already
+           presented a valid, revocable workspace API key — a holder of that
+           key can already update leads by phone through `/intake/leads`.
+        4. **A new lead**, only when `BOLNA_CREATE_MISSING_LEADS` is on.
 
-        Steps 3 and 4 are new, and worth saying plainly why they are safe here
-        when contract §5 forbade them. §5's objection was that phone matching
-        "would let a **spoofed** payload write to an arbitrary lead" — an
-        objection about an *unauthenticated* body. Every request reaching this
-        method has already presented a valid, revocable workspace API key
-        carrying a permission template. A caller holding that key can already
-        create and update leads by phone through `POST /intake/leads`; matching
-        on phone here grants it nothing it did not already have.
-
-        What that reasoning does **not** license is a webhook route with no
-        credential at all. If one is ever added, step 3 must be switched off
-        with it: `BOLNA_MATCH_BY_PHONE=false` exists for exactly that.
+        Anything else is refused with a logged reference. Never matched by name.
         """
-        existing = await self._execution_by_external_id(external_id)
+        existing = await self._execution_by_external_id(external_id, lock=True)
         if existing is not None:
             lead = await self._leads.get_lead(existing.lead_id)
             return lead, existing
 
         lead_from_payload: Lead | None = None
-        raw_lead_id = payload.user_data.get("crm_lead_id")
+        raw_lead_id = call.crm_lead_id
         if raw_lead_id:
             try:
-                lead_id = uuid.UUID(str(raw_lead_id))
+                lead_id = uuid.UUID(raw_lead_id)
             except ValueError:
                 raise api_error(422, "invalid_lead_id", "crm_lead_id is not a valid id") from None
             # `get_lead` is workspace-scoped and 404s for anything outside it,
@@ -605,23 +577,18 @@ class VoiceCallService:
 
         phone: str | None = None
         if lead_from_payload is None and self._match_by_phone:
-            lead_from_payload, phone = await self._lead_by_phone(payload)
+            lead_from_payload, phone = await self._lead_by_phone(call)
+
+        if lead_from_payload is None and phone is not None and self._create_missing_leads:
+            lead_from_payload = await self._create_lead_for_call(phone, call)
 
         if lead_from_payload is None:
-            if phone is not None and self._create_missing_leads:
-                lead_from_payload = await self._create_lead_for_call(phone, payload)
-            else:
-                raise api_error(
-                    422,
-                    "unknown_execution",
-                    "No CRM record of that execution, and the payload carries "
-                    "neither a crm_lead_id nor a phone number matching a lead",
-                )
+            raise self._unmatched(call, external_id=external_id)
 
         row = VoiceCallExecution(
             lead_id=lead_from_payload.id,
-            recipient_phone=phone or lead_from_payload.identity_value,
-            agent_id=payload.agent_id,
+            recipient_phone=phone or call.recipient_phone or lead_from_payload.identity_value,
+            agent_id=call.agent_id,
             external_id=external_id,
             status=VoiceCallStatus.DISPATCHED,
             context_sent={},
@@ -631,27 +598,6 @@ class VoiceCallService:
         return lead_from_payload, row
 
     # --- turning an execution into a call log -------------------------------
-
-    def _duration_seconds(self, payload: VoiceExecutionWebhook) -> int:
-        """How long the two parties spoke, clamped to what a call log accepts."""
-        raw = first_present(payload.model_dump(), DURATION_PATHS)
-        if raw in (None, ""):
-            return 0
-        try:
-            seconds = round(float(raw))
-        except (TypeError, ValueError):
-            return 0
-        # `CallLogCreate` bounds duration at 0..86_400; a call log written by
-        # this path must satisfy the same bounds a human's would.
-        return max(0, min(seconds, 86_400))
-
-    def _direction(self, payload: VoiceExecutionWebhook) -> str:
-        """`OUTGOING` unless the payload says the customer called us."""
-        raw = first_present(payload.model_dump(), DIRECTION_PATHS)
-        text = str(raw or "").strip().lower()
-        if text in ("inbound", "incoming", "in"):
-            return DIRECTION_INCOMING
-        return DIRECTION_OUTGOING
 
     async def _disposition_for(
         self, *, status: str, duration: int, succeeded: bool
@@ -690,136 +636,149 @@ class VoiceCallService:
                 return match
         return default
 
+    async def _outcome(
+        self, status: str, lead: Lead, row: VoiceCallExecution, external_id: str
+    ) -> WebhookOutcome:
+        context = await self._context.get_context(lead)
+        return WebhookOutcome(
+            status=status,
+            execution_id=external_id,
+            lead_id=lead.id,
+            written=False,
+            call_count=context.call_count,
+            last_call_summary=context.last_call_summary,
+            call_summary=row.summary,
+            summary_source=row.summary_source,
+            call_log_id=row.call_action_id,
+            call_id=row.id,
+        )
+
     async def handle_execution(self, payload: VoiceExecutionWebhook) -> WebhookOutcome:
         """Process one Bolna delivery. Safe to call any number of times.
 
         Three outcomes, and only one of them writes:
 
         - **`duplicate`** — this execution already completed. Nothing is
-          touched, and the answer is a 200 because a non-2xx would make Bolna
-          retry a delivery that has already been fully processed.
+          touched; a 200, because a non-2xx would make Bolna retry a delivery
+          that has already been fully processed.
         - **`pending`** — a non-terminal status (`queued`, `ringing`,
-          `in-progress`). The vendored `setup-webhook` skill warns that deduping
-          on the execution id alone discards these; the CRM records the status
-          and writes nothing else.
-        - **`accepted`** — the first terminal delivery. Writes the summary back
-          to the lead's context, records a `CALL_LOGGED` action carrying the
-          call's direction, duration and disposition, and closes the execution.
+          `in-progress`). The status and body are recorded; nothing else.
+        - **`accepted`** — the first terminal delivery. In one transaction:
 
-        Every delivery, terminal or not, stores the body it arrived with.
+          1. the call's transcript, duration and summary are stored on its
+             execution row;
+          2. an AI summary is produced (Bolna's own, via `CallSummarizer`), or
+             the safe fallback if there is none or summarising failed — never
+             failing the webhook;
+          3. **one** `CALL_LOGGED` action is written, marked `source: AI_CALL`,
+             with the summary as its body — the timeline's "AI Call" entry;
+          4. the lead's continuity summary (`last_call_summary`) is updated,
+             only with a real AI summary — a placeholder would pollute the next
+             call's prompt;
+          5. extraction write-back runs on a successful call (docs/12), which
+             only writes meaningful, changed values.
+
+        The execution row is locked for the duration, so concurrent retries
+        serialise and exactly one of them writes.
         """
-        external_id = payload.resolved_execution_id()
+        call = normalise_execution(
+            payload.model_dump(mode="json"),
+            summary_disposition=self._config.summary_disposition if self._config else None,
+        )
+        external_id = call.execution_id
         if not external_id:
             raise api_error(422, "missing_execution_id", "The payload carries no execution_id")
 
-        lead, row = await self._lead_for_payload(payload, external_id=external_id)
+        lead, row = await self._lead_for_payload(call, external_id=external_id)
+        now = dt.datetime.now(dt.UTC)
 
         # The idempotency gate. Everything after the first terminal delivery for
         # this execution is a no-op, however many times Bolna retries.
         if row.completed_at is not None:
-            context = await self._context.get_context(lead)
-            return WebhookOutcome(
-                status="duplicate",
-                execution_id=external_id,
-                lead_id=lead.id,
-                written=False,
-                call_count=context.call_count,
-                last_call_summary=context.last_call_summary,
-            )
-
-        raw_status = (payload.status or "").strip().lower()
-        summary = self._extract_summary(payload)
-        succeeded = raw_status in TERMINAL_SUCCESS_STATUSES
-        failed = raw_status in TERMINAL_FAILURE_STATUSES
-        # A payload carrying a summary is a finished call whatever the status
-        # string says — a vendor may add a status this release has never seen,
-        # and silently dropping the summary would be the worse failure.
-        terminal = succeeded or failed or summary is not None
+            logger.info("voice.webhook duplicate execution=%s lead=%s", external_id, lead.id)
+            return await self._outcome("duplicate", lead, row, external_id)
 
         row.bolna_status = payload.status
-        if payload.agent_id and not row.agent_id:
-            row.agent_id = payload.agent_id
-        # Verbatim, on every delivery including non-terminal ones. This is the
-        # evidence that replaces the guesswork in `PHONE_PATHS` and
-        # `DURATION_PATHS`: after the first real call, `select raw_payload from
-        # voice_call_executions` says exactly what Bolna sends.
+        row.webhook_received_at = now
+        if call.agent_id and not row.agent_id:
+            row.agent_id = call.agent_id
+        # Verbatim, on every delivery. The evidence that settles which keys
+        # Bolna really sends; never logged, only stored.
         row.raw_payload = payload.model_dump(mode="json")
 
-        if not terminal:
+        if not call.terminal:
             await self._session.commit()
-            context = await self._context.get_context(lead)
-            return WebhookOutcome(
-                status="pending",
-                execution_id=external_id,
-                lead_id=lead.id,
-                written=False,
-                call_count=context.call_count,
-                last_call_summary=context.last_call_summary,
+            logger.info(
+                "voice.webhook pending execution=%s lead=%s status=%s",
+                external_id,
+                lead.id,
+                call.status or "-",
             )
+            return await self._outcome("pending", lead, row, external_id)
+
+        duration = call.duration_seconds or 0
+        summary = await summarize_call(call, self._summarizer)
+        row.transcript = call.transcript
+        row.duration_seconds = duration
+        row.summary = summary.text
+        row.summary_source = summary.source
+        row.summary_error = summary.error
 
         written = False
-        if summary is not None and not failed:
-            # `external_id` makes this independently idempotent, so even a
-            # delivery that somehow slipped past the `completed_at` gate cannot
-            # double-count the call or double-write the timeline.
+        if summary.source == SUMMARY_SOURCE_AI:
+            # `external_id` makes this independently idempotent. No NOTE: the
+            # call log below carries the summary, and one call is one entry.
             _, written = await self._context.update_last_call_summary(
-                lead, summary=summary, external_id=external_id
+                lead, summary=summary.text, external_id=external_id, record_note=False
             )
 
-        # The call itself, on the timeline, in the shape the rest of the product
-        # already understands: a `CALL_LOGGED` action with a direction, a
-        # duration and one of the workspace's own dispositions. Written through
-        # `ActionWriter.record_call` — the same method the manual log-call form
-        # uses — so a Bolna call and a human-logged call are the same kind of
-        # record, and every report that counts calls counts these too.
-        #
-        # Guarded by the same `completed_at` gate as the summary above, so a
-        # retried webhook cannot produce a second call log.
-        duration = self._duration_seconds(payload)
+        # The call itself, through `ActionWriter.record_call` — the method the
+        # manual log-call form uses — so every report that counts calls counts
+        # these too. `extra` marks it as an AI call and links it back.
         disposition = await self._disposition_for(
-            status=raw_status, duration=duration, succeeded=succeeded
+            status=call.status, duration=duration, succeeded=call.succeeded
         )
+        call_action_id: uuid.UUID | None = None
         if disposition is not None:
             writer = ActionWriter(self._session, actor_id=self._actor_id)
             await writer.open_changeset(
                 source=ChangesetSource.AUTOMATION,
-                summary=f"Voice call logged on {lead.identity_value}",
+                summary=f"AI call logged on {lead.identity_value}",
             )
-            writer.record_call(
+            action = writer.record_call(
                 lead,
-                direction=self._direction(payload),
+                direction=call.direction,
                 disposition_id=disposition.id,
                 duration_seconds=duration,
-                # Deliberately no notes. `update_last_call_summary` above has
-                # already put the summary on the timeline as its own NOTE, and
-                # copying it here would print the same paragraph twice under one
-                # call. The call log carries what only it knows — how long, which
-                # way, what outcome — and the note carries the words.
-                notes=None,
+                notes=summary.text,
+                extra={
+                    "source": AI_CALL_SOURCE,
+                    "execution_id": external_id,
+                    "call_id": str(row.id),
+                    "call_status": call.status or None,
+                    "summary_source": summary.source,
+                    "has_transcript": call.transcript is not None,
+                },
             )
+            await self._session.flush()
+            call_action_id = action.id
         else:
-            # A workspace with every disposition archived. Do not lose the call:
-            # record what happened as a note instead of failing the webhook.
+            # Every disposition archived. Do not lose the call: record it as a
+            # note instead of failing the webhook.
             await self._note(
                 lead,
                 body=(
-                    f"Voice call ended (status: {payload.status or 'unknown'}, "
-                    f"{duration}s). No live call disposition is configured."
+                    f"AI call ended (status: {call.status or 'unknown'}, {duration}s). "
+                    f"{summary.text}"
                 ),
             )
+        row.call_action_id = call_action_id
 
-        # Additive extraction write-back (docs/12). Only runs on a terminal
-        # success — a failed / no-answer / busy call may carry stale extracted
-        # data from a prior partial delivery that Bolna did not clear, and
-        # writing that back would corrupt the lead exactly the way §6.2 of the
-        # contract is designed to prevent. Wrapped in its own AUTOMATION
-        # changeset (the summary and the call log each opened their own too),
-        # so an operator can undo the extraction pass separately if a mapping
-        # turns out to be wrong. A workspace with no mappings does one small
-        # SELECT and returns immediately; the code path costs nothing until an
-        # operator configures a mapping through Settings → Voice extraction.
+        # Additive extraction write-back (docs/12), only on a terminal success:
+        # a failed call may carry stale extracted data. Its own AUTOMATION
+        # changeset, so an operator can undo it separately.
         extraction = ExtractionOutcome()
-        if succeeded and not failed:
+        if call.succeeded:
             extraction_writer = ActionWriter(self._session, actor_id=self._actor_id)
             await extraction_writer.open_changeset(
                 source=ChangesetSource.AUTOMATION,
@@ -830,26 +789,26 @@ class VoiceCallService:
                 workspace=self._workspace,
                 leads=self._leads,
                 actor_id=self._actor_id,
-                summary_disposition=(
-                    self._config.summary_disposition if self._config else None
-                ),
+                summary_disposition=(self._config.summary_disposition if self._config else None),
             )
             extraction = await extractor.apply(payload, lead, extraction_writer)
 
-        row.completed_at = dt.datetime.now(dt.UTC)
-        row.status = VoiceCallStatus.FAILED if failed else VoiceCallStatus.COMPLETED
+        row.completed_at = now
+        row.status = VoiceCallStatus.FAILED if call.failed else VoiceCallStatus.COMPLETED
         await self._session.commit()
 
-        context = await self._context.get_context(lead)
-        return WebhookOutcome(
-            status="accepted",
-            execution_id=external_id,
-            lead_id=lead.id,
-            written=written,
-            extraction=extraction,
-            call_count=context.call_count,
-            last_call_summary=context.last_call_summary,
+        logger.info(
+            "voice.webhook accepted execution=%s lead=%s status=%s summary=%s%s",
+            external_id,
+            lead.id,
+            call.status or "-",
+            summary.source,
+            f" summary_error={summary.error}" if summary.error else "",
         )
+        outcome = await self._outcome("accepted", lead, row, external_id)
+        outcome.written = written
+        outcome.extraction = extraction
+        return outcome
 
     # --- lookups shared with the router -------------------------------------
 

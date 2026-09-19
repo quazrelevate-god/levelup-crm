@@ -1238,15 +1238,17 @@ async def test_a_completed_call_writes_a_call_logged_action(
     assert payload["duration_seconds"] == 92
     assert payload["direction"] == "OUTGOING"
     assert payload["disposition_id"]
-    # The summary is on its own NOTE, not repeated inside the call log — one
-    # call must not print the same paragraph twice on the timeline.
-    assert logged[0].body is None
+    # Post-call automation: the summary is the call log's own body, and the
+    # log is marked as an AI call. No separate NOTE — one call, one entry.
+    assert logged[0].body == CALL_ONE_SUMMARY
+    assert payload["source"] == "AI_CALL"
+    assert payload["execution_id"] == "real-exec-3"
     notes = await db_session.execute(
         select(Action).where(
             Action.workspace_id == workspace.id, Action.kind == SystemActionKind.NOTE
         )
     )
-    assert [n.body for n in notes.scalars().all()] == [CALL_ONE_SUMMARY]
+    assert list(notes.scalars().all()) == []
 
     # A 92-second answered call is "connected", so it gets the workspace's
     # default disposition — the same rule the manual log-call form follows.
@@ -1308,11 +1310,25 @@ async def test_an_unanswered_call_gets_the_no_answer_disposition(
     assert str(lead["id"]) == str(logged.lead_id)
 
 
+@pytest.fixture
+def auto_create(wired_app: FastAPI) -> Any:
+    """`BOLNA_CREATE_MISSING_LEADS=true`, for the tests that exercise it.
+
+    Off by default since post-call automation: an unmatched webhook must not
+    invent a customer. The behaviour still exists for deployments that opt in.
+    """
+    original = wired_app.state.settings.bolna_create_missing_leads
+    wired_app.state.settings.bolna_create_missing_leads = True
+    yield
+    wired_app.state.settings.bolna_create_missing_leads = original
+
+
 async def test_a_call_to_an_unknown_number_creates_exactly_one_lead(
     api: AsyncClient,
     workspace: WorkspaceFixture,
     bolna: RecordingBolnaClient,
     db_session: AsyncSession,
+    auto_create: None,
 ) -> None:
     """The customer Bolna called is not in the CRM yet. Create them, once."""
     await _admin(api, workspace)
@@ -1339,6 +1355,7 @@ async def test_call_two_to_the_same_new_number_reuses_the_created_lead(
     workspace: WorkspaceFixture,
     bolna: RecordingBolnaClient,
     db_session: AsyncSession,
+    auto_create: None,
 ) -> None:
     """The CALL 1 / CALL 2 requirement, entirely through real webhooks.
 
