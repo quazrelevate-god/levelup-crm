@@ -21,6 +21,7 @@ import type {
 } from '@/api/types'
 import { Badge } from '@/components/ui/badge'
 import { Select } from '@/components/ui/select'
+import { formatCallDuration, formatCallStatus } from '@/features/calls/format'
 import { toDisplayString, toDisplayStringOr } from '@/lib/format'
 
 interface LeadTimelineProps {
@@ -59,20 +60,6 @@ function renderValue(value: unknown): string {
  */
 function isAiCall(action: LeadAction): boolean {
   return action.kind === 'CALL_LOGGED' && action.payload.source === 'AI_CALL'
-}
-
-/** `154` → `2m 34s`. */
-function formatDuration(value: unknown): string {
-  const total = Math.max(0, Math.round(Number(value) || 0))
-  const minutes = Math.floor(total / 60)
-  const seconds = total % 60
-  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`
-}
-
-/** Bolna's status string, for people: `no-answer` → `No answer`. */
-function formatCallStatus(value: unknown): string {
-  const text = toDisplayStringOr(value, 'unknown').replace(/[-_]/g, ' ')
-  return text.charAt(0).toUpperCase() + text.slice(1)
 }
 
 export function LeadTimeline({
@@ -149,7 +136,7 @@ export function LeadTimeline({
           </p>
           {action.body ? <p className="whitespace-pre-wrap">{action.body}</p> : null}
           <p className="text-muted-foreground text-xs">
-            Duration: {formatDuration(payload.duration_seconds)} · Status:{' '}
+            Duration: {formatCallDuration(payload.duration_seconds)} · Status:{' '}
             {formatCallStatus(payload.call_status)}
             {disposition ? ` · ${disposition.label}` : ''}
           </p>

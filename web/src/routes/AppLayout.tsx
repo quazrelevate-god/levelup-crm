@@ -11,6 +11,7 @@ import { useAuth } from '@/features/auth/context'
 const NAV_LINKS = [
   { to: '/dashboard', label: 'Dashboard' },
   { to: '/leads', label: 'Leads' },
+  { to: '/calls', label: 'Call details' },
   { to: '/tasks', label: 'Tasks' },
   { to: '/import', label: 'Import' },
   { to: '/edit-report', label: 'Edit report' },

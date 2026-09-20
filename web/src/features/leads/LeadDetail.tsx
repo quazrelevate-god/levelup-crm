@@ -33,6 +33,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { AiCallSummaryCard } from '@/features/calls/AiCallSummaryCard'
 import { useActionFieldTypes } from '@/features/fields/api'
 import { FieldInput } from '@/features/fields/FieldInput'
 import { inputTypeForWidget } from '@/features/fields/renderers'
@@ -413,6 +414,10 @@ export function LeadDetail({
             arrive on the timeline once the call ends.
           </p>
         </div>
+
+        {/* The most recent completed AI call for *this* lead. Summary only —
+            transcript and provider payload live on the call's own page. */}
+        <AiCallSummaryCard workspaceId={workspaceId} leadId={lead.id} />
 
         <div className="space-y-2">
           <Textarea

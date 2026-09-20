@@ -8,6 +8,8 @@ import { EditReportPage } from '@/routes/EditReportPage'
 import { FieldSettingsPage } from '@/routes/FieldSettingsPage'
 import { ImportPage } from '@/routes/ImportPage'
 import { IntegrationsPage } from '@/routes/IntegrationsPage'
+import { CallDetailPage } from '@/routes/CallDetailPage'
+import { CallsPage } from '@/routes/CallsPage'
 import { LeadsPage } from '@/routes/LeadsPage'
 import { ForgotPasswordPage } from '@/routes/ForgotPasswordPage'
 import { LoginPage } from '@/routes/LoginPage'
@@ -47,6 +49,8 @@ export const router = createBrowserRouter([
       { index: true, element: <Navigate to="/leads" replace /> },
       { path: 'dashboard', element: <DashboardPage /> },
       { path: 'leads', element: <LeadsPage /> },
+      { path: 'calls', element: <CallsPage /> },
+      { path: 'calls/:callId', element: <CallDetailPage /> },
       { path: 'tasks', element: <TasksPage /> },
       { path: 'import', element: <ImportPage /> },
       { path: 'edit-report', element: <EditReportPage /> },

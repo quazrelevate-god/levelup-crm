@@ -23,6 +23,9 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 __all__ = [
+    "VoiceCallDetailRead",
+    "VoiceCallLeadRef",
+    "VoiceCallSummaryRead",
     "VoiceCallTrigger",
     "VoiceCallTriggerResult",
     "VoiceContextRead",
@@ -225,3 +228,65 @@ class VoiceExecutionResult(BaseModel):
     #: The `CALL_LOGGED` action this call produced, and the CRM's own row id.
     call_log_id: uuid.UUID | None = None
     call_id: uuid.UUID | None = None
+
+
+# --- reading past calls back (docs/13 §6) ----------------------------------
+
+
+class VoiceCallLeadRef(BaseModel):
+    """Who a call was with, in the workspace's own vocabulary.
+
+    The two headline values are the workspace's configured primary fields
+    (H1/H2) — for one customer that is Name and Course, for another something
+    else entirely. Both arrive already View-projected, so a caller who cannot
+    view a field gets `None` rather than its value, and the labels come from
+    the field definitions rather than from anything hardcoded.
+    """
+
+    lead_id: uuid.UUID
+    identity_value: str
+    primary_h1: Any = None
+    primary_h2: Any = None
+    primary_h1_label: str | None = None
+    primary_h2_label: str | None = None
+
+
+class VoiceCallSummaryRead(BaseModel):
+    """One AI call, at the level the lead card and the call list need.
+
+    Deliberately without transcript, extracted data or raw payload: those are
+    the detail read. A list of fifty calls must not ship fifty transcripts.
+    """
+
+    id: uuid.UUID
+    lead: VoiceCallLeadRef
+    execution_id: str | None = None
+    #: The CRM's own view: QUEUED, DISPATCHED, COMPLETED, FAILED.
+    status: str
+    #: Bolna's own status string, unmapped.
+    bolna_status: str | None = None
+    duration_seconds: int | None = None
+    summary: str | None = None
+    #: `AI` when the summariser wrote it, `FALLBACK` for the safe placeholder.
+    summary_source: str | None = None
+    agent_id: str | None = None
+    created_at: dt.datetime
+    dispatched_at: dt.datetime | None = None
+    completed_at: dt.datetime | None = None
+
+
+class VoiceCallDetailRead(VoiceCallSummaryRead):
+    """One AI call, in full. The dedicated call page's read."""
+
+    recipient_phone: str
+    transcript: str | None = None
+    extracted_data: dict[str, Any] = Field(default_factory=dict)
+    #: The vendor's own body, **sanitised**: anything credential-shaped is
+    #: redacted on the way out (`services.voice_history.redact_payload`).
+    #: Read-only — there is no endpoint that writes it.
+    raw_payload: dict[str, Any] = Field(default_factory=dict)
+    webhook_received_at: dt.datetime | None = None
+    #: The `CALL_LOGGED` timeline action this call produced, if it got that far.
+    call_log_id: uuid.UUID | None = None
+    summary_error: str | None = None
+    last_error: str | None = None

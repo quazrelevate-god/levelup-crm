@@ -44,7 +44,11 @@ from app.integrations.bolna import (
 )
 from app.models.field import LeadField
 from app.permissions import FieldProjectionService, FieldWriteFilter, load_grants
+from app.schemas.common import Page, PageParams, page_params
 from app.schemas.voice import (
+    VoiceCallDetailRead,
+    VoiceCallLeadRef,
+    VoiceCallSummaryRead,
     VoiceCallTrigger,
     VoiceCallTriggerResult,
     VoiceContextRead,
@@ -57,6 +61,7 @@ from app.schemas.voice import (
 from app.services.leads import LeadService
 from app.services.voice_calls import VoiceCallService
 from app.services.voice_context import VoiceContext, VoiceContextService
+from app.services.voice_history import CallWithLead, VoiceCallHistoryService
 from app.services.voice_postcall import CallSummarizer
 from app.tenancy.scoping import WorkspaceScope, require_workspace
 
@@ -308,6 +313,124 @@ async def trigger_voice_call(
         previous_call_summary=outcome.context.last_call_summary,
         call_count=outcome.context.call_count,
         error=outcome.error,
+    )
+
+
+# --- reading past calls (docs/13 §6) ---------------------------------------
+
+
+async def _history_service(
+    scope: Annotated[WorkspaceScope, Depends(require_workspace)],
+    leads: Annotated[LeadService, Depends(_lead_service)],
+) -> VoiceCallHistoryService:
+    return VoiceCallHistoryService(
+        scope.session,
+        workspace=scope.workspace,
+        leads=leads,
+        visible_membership_ids=scope.visible_membership_ids,
+        sees_all=scope.sees_all_members,
+    )
+
+
+def _lead_ref(entry: CallWithLead) -> VoiceCallLeadRef:
+    return VoiceCallLeadRef(
+        lead_id=entry.lead.id,
+        identity_value=entry.lead.identity_value,
+        primary_h1=entry.primary_h1,
+        primary_h2=entry.primary_h2,
+        primary_h1_label=entry.primary_h1_label,
+        primary_h2_label=entry.primary_h2_label,
+    )
+
+
+def _call_summary(entry: CallWithLead) -> VoiceCallSummaryRead:
+    call = entry.call
+    return VoiceCallSummaryRead(
+        id=call.id,
+        lead=_lead_ref(entry),
+        execution_id=call.external_id,
+        status=call.status.value,
+        bolna_status=call.bolna_status,
+        duration_seconds=call.duration_seconds,
+        summary=call.summary,
+        summary_source=call.summary_source,
+        agent_id=call.agent_id,
+        created_at=call.created_at,
+        dispatched_at=call.dispatched_at,
+        completed_at=call.completed_at,
+    )
+
+
+@router.get(
+    "/voice/calls",
+    response_model=Page[VoiceCallSummaryRead],
+    summary="AI calls, newest first — the whole workspace's or one lead's",
+)
+async def list_voice_calls(
+    scope: Annotated[WorkspaceScope, Depends(require_workspace)],
+    history: Annotated[VoiceCallHistoryService, Depends(_history_service)],
+    params: Annotated[PageParams, Depends(page_params)],
+    lead_id: Annotated[uuid.UUID | None, Query()] = None,
+    completed_only: Annotated[bool, Query()] = False,
+) -> Page[VoiceCallSummaryRead]:
+    """The call list, and the lead panel's "most recent completed call".
+
+    Gated on the existing `calling.view_call_history` — the flag that already
+    governs seeing a lead's call activity, which is exactly what this is.
+    `lead_id` plus `completed_only=true&limit=1` is how the lead card asks for
+    its one call; no separate endpoint exists for it, because this is the same
+    question with a narrower filter.
+    """
+    _require(scope, "view_call_history")
+    entries, total = await history.list_calls(
+        lead_id=lead_id,
+        completed_only=completed_only,
+        limit=params.limit,
+        offset=params.offset,
+    )
+    return Page(
+        items=[_call_summary(entry) for entry in entries],
+        total=total,
+        limit=params.limit,
+        offset=params.offset,
+    )
+
+
+@router.get(
+    "/voice/calls/{call_id}",
+    response_model=VoiceCallDetailRead,
+    summary="One AI call in full: transcript, extracted data, sanitised payload",
+)
+async def get_voice_call(
+    call_id: uuid.UUID,
+    request: Request,
+    scope: Annotated[WorkspaceScope, Depends(require_workspace)],
+    history: Annotated[VoiceCallHistoryService, Depends(_history_service)],
+) -> VoiceCallDetailRead:
+    """Everything stored about one call.
+
+    The raw provider payload is sanitised on the way out — redacted by key
+    name, plus an exact-match pass for the deployment's own Bolna credential in
+    case an upstream ever echoed it back. The stored row is untouched: this is
+    a read, and nothing in the API writes `raw_payload`.
+    """
+    _require(scope, "view_call_history")
+    entry = await history.get_call(call_id)
+    call = entry.call
+    config = bolna_config(request)
+    base = _call_summary(entry)
+    return VoiceCallDetailRead(
+        **base.model_dump(),
+        recipient_phone=call.recipient_phone,
+        transcript=call.transcript,
+        extracted_data=dict(call.raw_payload.get("extracted_data") or {})
+        if isinstance(call.raw_payload, dict)
+        else {},
+        raw_payload=history.sanitised_payload(call, secret=config.api_key if config else None),
+        webhook_received_at=call.webhook_received_at,
+        call_log_id=call.call_action_id,
+        summary_error=call.summary_error,
+        last_error=call.last_error,
     )
 
 

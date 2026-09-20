@@ -161,6 +161,44 @@ Disposition: a successful call at or above the workspace's
 manual form follows. A failed status maps to the system `No Answer` / `Number
 Busy` dispositions where they exist.
 
+## 6a. Reading calls back: the UI
+
+Two read endpoints serve every screen. Neither writes, and there is no second
+store of calls — both read `voice_call_executions`.
+
+```
+GET /api/v1/workspaces/{ws}/voice/calls
+        ?lead_id=<uuid>&completed_only=true&limit=&offset=
+GET /api/v1/workspaces/{ws}/voice/calls/{call_id}
+```
+
+Both are gated on the existing `calling.view_call_history` capability, both
+return only calls whose lead the caller may see, and the lead's headline values
+travel through the same View projection as everywhere else — so a field
+somebody cannot see on the lead page cannot arrive beside a call either.
+
+| Screen | Where | Reads |
+|---|---|---|
+| **AI Call Summary card** | Lead panel → *Log activity*, right after the 🤖 AI Call button | the list, `lead_id` + `completed_only=true&limit=1` |
+| **Call details** (main nav) → `/calls` | the workspace's calls, newest first | the list |
+| **One call** → `/calls/{call_id}` | summary, call information, transcript, extracted data, raw payload | the detail read |
+
+The card is deliberately small: summary, duration, status and a
+**View Raw Call Details →** link that carries the call's own **CRM call id**.
+Raw call data appears only on `/calls/{call_id}`, never in the lead panel, and
+its four sections are collapsed by default.
+
+**The raw provider payload is sanitised on the way out**
+(`services/voice_history.py::redact_payload`): any key whose name looks like a
+credential is replaced at any depth, and the deployment's own Bolna key is
+replaced by exact match in case an upstream ever echoed it back. The stored row
+keeps what arrived — it is evidence — and nothing in the API writes it.
+
+The lead card shows the **most recent completed** call, so a lead with three
+calls shows the third; each call keeps its own summary, transcript, duration,
+identifiers, extracted data and payload, and a new call never overwrites an
+older one.
+
 ## 7. Lead updates
 
 Only **extraction mappings** (docs/12) change lead fields. They run on

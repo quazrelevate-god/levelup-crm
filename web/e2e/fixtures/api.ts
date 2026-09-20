@@ -559,6 +559,60 @@ export function action(overrides: Record<string, unknown> = {}) {
  * A timeline showing the M5 guarantee: three field changes sharing one
  * changeset id, which is what makes them undoable as a unit.
  */
+export const CALL_LEAD_ID = 'lead-1'
+
+/** The lead reference a call carries: the workspace's own H1/H2 fields. */
+export function callLeadRef(overrides: Record<string, unknown> = {}) {
+  return {
+    lead_id: CALL_LEAD_ID,
+    identity_value: 'Perumal',
+    primary_h1: 'Perumal',
+    primary_h2: 'Breakthrough Filmmaking',
+    primary_h1_label: 'Name',
+    primary_h2_label: 'Course',
+    ...overrides,
+  }
+}
+
+export function voiceCall(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'call-newest',
+    lead: callLeadRef(),
+    execution_id: 'exec-newest',
+    status: 'COMPLETED',
+    bolna_status: 'completed',
+    duration_seconds: 117,
+    summary: 'Perumal confirmed his interest in Breakthrough Filmmaking.',
+    summary_source: 'AI',
+    agent_id: 'agent-1',
+    created_at: '2026-09-20T07:27:50Z',
+    dispatched_at: '2026-09-20T07:27:51Z',
+    completed_at: '2026-09-20T07:30:00Z',
+    ...overrides,
+  }
+}
+
+/** The detail read: the summary shape plus everything heavy. */
+export function voiceCallDetail(overrides: Record<string, unknown> = {}) {
+  return {
+    ...voiceCall(),
+    recipient_phone: '+919087822357',
+    transcript: 'assistant: Hello Perumal.\nuser: Yes, I am interested.',
+    extracted_data: { General: { 'Call Summary': { subjective: 'Confirmed interest.' } } },
+    raw_payload: {
+      id: 'exec-newest',
+      status: 'completed',
+      api_key: '<redacted>',
+      telephony_data: { to_number: '+919087822357', call_type: 'outbound' },
+    },
+    webhook_received_at: '2026-09-20T07:30:01Z',
+    call_log_id: 'action-call-1',
+    summary_error: null,
+    last_error: null,
+    ...overrides,
+  }
+}
+
 export const TIMELINE = [
   action({
     id: 'action-1',
@@ -702,6 +756,12 @@ export interface StubOptions {
   readonly stageBuckets?: Record<string, unknown>[]
   /** What `POST /auth/password-reset/confirm` answers. */
   readonly setPasswordResult?: 'ok' | 'invalid_token'
+  /** AI calls `GET /voice/calls` returns, newest first. */
+  readonly voiceCalls?: Record<string, unknown>[]
+  /** Details `GET /voice/calls/{id}` returns, keyed by call id. */
+  readonly voiceCallDetails?: Record<string, Record<string, unknown>>
+  /** When false, both voice-call reads answer 403 insufficient_permissions. */
+  readonly callHistoryAllowed?: boolean
 }
 
 export interface StubHandle {
@@ -1921,6 +1981,42 @@ export async function stubApi(page: Page, options: StubOptions = {}): Promise<St
       })
       currentLeads = [...currentLeads, created]
       return json(route, 201, created)
+    }
+
+    // --- AI calls (docs/13) ----------------------------------------------
+    const callDetailMatch = /\/voice\/calls\/([^/]+)$/.exec(path)
+    if (callDetailMatch && method === 'GET') {
+      if (options.callHistoryAllowed === false) {
+        return apiError(route, 403, 'insufficient_permissions')
+      }
+      const detail = (options.voiceCallDetails ?? {})[callDetailMatch[1] ?? '']
+      if (!detail) {
+        return apiError(route, 404, 'not_found')
+      }
+      return json(route, 200, detail)
+    }
+
+    if (path.endsWith('/voice/calls') && method === 'GET') {
+      if (options.callHistoryAllowed === false) {
+        return apiError(route, 403, 'insufficient_permissions')
+      }
+      const all = options.voiceCalls ?? []
+      const wantedLead = url.searchParams.get('lead_id')
+      const completedOnly = url.searchParams.get('completed_only') === 'true'
+      const limit = Number(url.searchParams.get('limit') ?? 20)
+      // The stub models the server's filters, because the lead card's whole
+      // correctness claim is "this lead, completed, newest first".
+      let items = all
+      if (wantedLead) {
+        items = items.filter(
+          (entry) => (entry.lead as { lead_id?: string } | undefined)?.lead_id === wantedLead,
+        )
+      }
+      if (completedOnly) {
+        items = items.filter((entry) => entry.completed_at !== null)
+      }
+      const total = items.length
+      return json(route, 200, { items: items.slice(0, limit), total, limit, offset: 0 })
     }
 
     const actionsMatch = /\/leads\/([^/]+)\/actions$/.exec(path)
