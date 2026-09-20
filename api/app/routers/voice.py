@@ -46,6 +46,7 @@ from app.models.field import LeadField
 from app.permissions import FieldProjectionService, FieldWriteFilter, load_grants
 from app.schemas.common import Page, PageParams, page_params
 from app.schemas.voice import (
+    ExtractionRead,
     VoiceCallDetailRead,
     VoiceCallLeadRef,
     VoiceCallSummaryRead,
@@ -62,7 +63,7 @@ from app.services.leads import LeadService
 from app.services.voice_calls import VoiceCallService
 from app.services.voice_context import VoiceContext, VoiceContextService
 from app.services.voice_history import CallWithLead, VoiceCallHistoryService
-from app.services.voice_postcall import CallSummarizer
+from app.services.voice_postcall import CallSummarizer, extractions_from_payload
 from app.tenancy.scoping import WorkspaceScope, require_workspace
 
 router = APIRouter(tags=["voice"])
@@ -419,14 +420,27 @@ async def get_voice_call(
     call = entry.call
     config = bolna_config(request)
     base = _call_summary(entry)
+    # Sanitise once, then read the extractions out of the *sanitised* body —
+    # so anything redacted there is redacted here too, and the two sections
+    # can never disagree about what this call produced.
+    payload = history.sanitised_payload(call, secret=config.api_key if config else None)
+    extracted, entries = extractions_from_payload(payload)
     return VoiceCallDetailRead(
         **base.model_dump(),
         recipient_phone=call.recipient_phone,
         transcript=call.transcript,
-        extracted_data=dict(call.raw_payload.get("extracted_data") or {})
-        if isinstance(call.raw_payload, dict)
-        else {},
-        raw_payload=history.sanitised_payload(call, secret=config.api_key if config else None),
+        extracted_data=extracted,
+        extractions=[
+            ExtractionRead(
+                group=item.group,
+                name=item.name,
+                path=item.path,
+                value=item.value,
+                confidence=item.confidence,
+            )
+            for item in entries
+        ],
+        raw_payload=payload,
         webhook_received_at=call.webhook_received_at,
         call_log_id=call.call_action_id,
         summary_error=call.summary_error,

@@ -42,6 +42,7 @@ __all__ = [
     "CALLER_PHONE_PATHS",
     "DIRECTION_PATHS",
     "DURATION_PATHS",
+    "EXTRACTION_SOURCES",
     "FALLBACK_FAILED",
     "FALLBACK_NO_SUMMARY",
     "FALLBACK_NO_TRANSCRIPT",
@@ -53,10 +54,13 @@ __all__ = [
     "TERMINAL_SUCCESS_STATUSES",
     "CallSummarizer",
     "CallSummary",
+    "Extraction",
     "NormalizedCallResult",
     "VendorCallSummarizer",
     "dig",
+    "extractions_from_payload",
     "first_present",
+    "flatten_extractions",
     "normalise_execution",
     "summarize_call",
 ]
@@ -405,3 +409,149 @@ async def summarize_call(call: NormalizedCallResult, summarizer: CallSummarizer)
             error="summary_unavailable",
         )
     return CallSummary(text=_cap(cleaned), source=SUMMARY_SOURCE_AI)
+
+
+# --- extracted data -----------------------------------------------------------
+
+#: Where a Bolna execution carries its extractions. `extracted_data` is the
+#: documented one; the other two appear on the execution object and are read
+#: only when the first is absent, so a vendor that moves them does not silently
+#: empty the Call Details page.
+EXTRACTION_SOURCES: tuple[str, ...] = ("extracted_data", "custom_extractions", "agent_extraction")
+
+#: Keys a leaf node uses for the value itself. `subjective` is what Bolna's
+#: own "Call Summary" extraction emits; the rest are the shapes this codebase
+#: and its tests already see.
+_VALUE_KEYS: tuple[str, ...] = ("value", "subjective", "answer", "text", "content", "result")
+
+#: Keys that mark a node as a *leaf* rather than a group of extractions.
+_LEAF_MARKERS: tuple[str, ...] = (*_VALUE_KEYS, "confidence", "validation")
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class Extraction:
+    """One extracted item, flattened out of whatever nesting Bolna used.
+
+    Bolna groups extractions: `{"General": {"Call Summary": {"subjective": …}}}`
+    is the group *General* containing the extraction *Call Summary*. An older
+    reading treated the top level as the extraction name, which made "General"
+    the name of something that is not an extraction at all — the whole payload
+    then looked unmapped and nothing was displayable.
+    """
+
+    #: The group, when the payload had one (`General`), else `None`.
+    group: str | None
+    #: The extraction's own name (`Call Summary`).
+    name: str
+    #: `Group / Name`, or just the name when ungrouped. What an operator sees,
+    #: and one of the spellings a mapping may be written against.
+    path: str
+    #: The meaningful value: the leaf's `value`/`subjective`/…, or the node.
+    value: Any
+    confidence: float | None
+    #: The node exactly as it arrived, for anything the above flattened away.
+    raw: Any
+
+
+def _looks_like_leaf(node: Any) -> bool:
+    """True when this dict is one extraction rather than a group of them."""
+    if not isinstance(node, dict):
+        return True
+    if any(key in node for key in _LEAF_MARKERS):
+        return True
+    # A group's children are themselves dicts; a leaf of plain scalars is a
+    # leaf even when none of the known value keys are present.
+    return not any(isinstance(child, dict) for child in node.values())
+
+
+def _leaf_value(node: Any) -> Any:
+    """The value a leaf carries, or the node itself when it has no obvious one."""
+    if not isinstance(node, dict):
+        return node
+    for key in _VALUE_KEYS:
+        if key in node and node[key] not in (None, ""):
+            return node[key]
+    # A leaf that *names* its value but leaves it empty is empty — not the
+    # node. Returning the whole `{"value": null, "confidence": 0.9}` here
+    # would turn "nothing was extracted" into a dict, and the write-back
+    # would try to store that dict in a text field.
+    if any(key in node for key in _VALUE_KEYS):
+        return None
+    # A single-entry dict is its own value: {"anything_else": "x"} is more
+    # useful read as "x".
+    if len(node) == 1:
+        return next(iter(node.values()))
+    return node
+
+
+def _confidence(node: Any) -> float | None:
+    if not isinstance(node, dict):
+        return None
+    raw = node.get("confidence")
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def flatten_extractions(extracted: Any) -> list[Extraction]:
+    """Flatten Bolna's extractions to a list, one entry per extracted item.
+
+    Handles both shapes the vendor produces, and does not care which:
+
+    - flat — `{"Customer Name": {"value": "Asha", "confidence": 0.9}}`
+    - grouped — `{"General": {"Call Summary": {"subjective": "…"}}}`
+
+    Nothing is dropped: an entry no mapping matches still appears here, which
+    is what lets the Call Details page show it instead of discarding it.
+    Never raises; a shape nobody anticipated becomes one entry with the node
+    as its value.
+    """
+    if not isinstance(extracted, dict):
+        return []
+
+    entries: list[Extraction] = []
+    for key, node in extracted.items():
+        name = str(key)
+        if isinstance(node, dict) and not _looks_like_leaf(node):
+            for child_key, child in node.items():
+                child_name = str(child_key)
+                entries.append(
+                    Extraction(
+                        group=name,
+                        name=child_name,
+                        path=f"{name} / {child_name}",
+                        value=_leaf_value(child),
+                        confidence=_confidence(child),
+                        raw=child,
+                    )
+                )
+            continue
+        entries.append(
+            Extraction(
+                group=None,
+                name=name,
+                path=name,
+                value=_leaf_value(node),
+                confidence=_confidence(node),
+                raw=node,
+            )
+        )
+    return entries
+
+
+def extractions_from_payload(body: Any) -> tuple[dict[str, Any], list[Extraction]]:
+    """`(raw extractions dict, flattened entries)` from an execution body.
+
+    Reads the first source that actually carries something, so the page shows
+    what the call produced rather than only what one key name held.
+    """
+    if not isinstance(body, dict):
+        return {}, []
+    for source in EXTRACTION_SOURCES:
+        candidate = body.get(source)
+        if isinstance(candidate, dict) and candidate:
+            return candidate, flatten_extractions(candidate)
+    return {}, []

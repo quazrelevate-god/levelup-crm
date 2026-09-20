@@ -23,6 +23,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 __all__ = [
+    "ExtractionRead",
     "VoiceCallDetailRead",
     "VoiceCallLeadRef",
     "VoiceCallSummaryRead",
@@ -275,12 +276,35 @@ class VoiceCallSummaryRead(BaseModel):
     completed_at: dt.datetime | None = None
 
 
+class ExtractionRead(BaseModel):
+    """One extracted item, flattened out of Bolna's grouping for display.
+
+    Bolna nests: `{"General": {"Call Summary": {"subjective": …}}}`. Reading
+    the top level as the extraction's name makes "General" look like the
+    extraction and hides the only thing anybody wanted to see, so the group
+    and the name are carried separately here.
+    """
+
+    #: `General`, when the payload grouped its extractions; else null.
+    group: str | None = None
+    #: The extraction's own name, e.g. `Call Summary`.
+    name: str
+    #: `Group / Name`, or just the name when ungrouped.
+    path: str
+    #: The value itself, already unwrapped from `value` / `subjective` / … .
+    value: Any = None
+    confidence: float | None = None
+
+
 class VoiceCallDetailRead(VoiceCallSummaryRead):
     """One AI call, in full. The dedicated call page's read."""
 
     recipient_phone: str
     transcript: str | None = None
     extracted_data: dict[str, Any] = Field(default_factory=dict)
+    #: The same extractions, flattened for display: one entry per extracted
+    #: item, whether or not any mapping writes it to a lead field.
+    extractions: list[ExtractionRead] = Field(default_factory=list)
     #: The vendor's own body, **sanitised**: anything credential-shaped is
     #: redacted on the way out (`services.voice_history.redact_payload`).
     #: Read-only — there is no endpoint that writes it.

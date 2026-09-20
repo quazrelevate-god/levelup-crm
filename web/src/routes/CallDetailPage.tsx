@@ -41,6 +41,14 @@ function Section({
   )
 }
 
+/** An extracted value as text: a string stays a string, a shape becomes JSON. */
+function extractedValue(value: unknown): string {
+  if (value === null || value === undefined) return '—'
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  return JSON.stringify(value, null, 2)
+}
+
 function Facts({ call }: { readonly call: VoiceCallDetail }) {
   const rows: readonly (readonly [string, string])[] = [
     [
@@ -181,13 +189,34 @@ export function CallDetailPage() {
         </Section>
 
         <Section title="Extracted data" testId="section-extracted-data">
-          {Object.keys(detail.extracted_data).length > 0 ? (
-            <pre
-              className="bg-muted max-h-96 overflow-auto rounded-md p-3 text-xs"
-              data-testid="call-extracted-data"
-            >
-              {JSON.stringify(detail.extracted_data, null, 2)}
-            </pre>
+          {detail.extractions.length > 0 ? (
+            <div className="space-y-3" data-testid="call-extracted-data">
+              {detail.extractions.map((item) => (
+                <div key={item.path}>
+                  <p className="text-muted-foreground text-xs">
+                    {item.group ? `${item.group} · ` : ''}
+                    {item.name}
+                    {item.confidence !== null
+                      ? ` · confidence ${Math.round(item.confidence * 100)}%`
+                      : ''}
+                  </p>
+                  <p className="text-sm whitespace-pre-wrap">{extractedValue(item.value)}</p>
+                </div>
+              ))}
+              {/* The same data as it arrived, for anything the flattening
+                  above summarised away. */}
+              <details>
+                <summary className="text-muted-foreground cursor-pointer text-xs select-none">
+                  Show as JSON
+                </summary>
+                <pre
+                  className="bg-muted mt-2 max-h-96 overflow-auto rounded-md p-3 text-xs"
+                  data-testid="call-extracted-json"
+                >
+                  {JSON.stringify(detail.extracted_data, null, 2)}
+                </pre>
+              </details>
+            </div>
           ) : (
             <p className="text-muted-foreground text-sm">Nothing was extracted from this call.</p>
           )}

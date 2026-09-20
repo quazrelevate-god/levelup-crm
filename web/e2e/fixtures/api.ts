@@ -598,7 +598,18 @@ export function voiceCallDetail(overrides: Record<string, unknown> = {}) {
     ...voiceCall(),
     recipient_phone: '+919087822357',
     transcript: 'assistant: Hello Perumal.\nuser: Yes, I am interested.',
+    // Bolna groups its extractions; the server flattens them into
+    // `extractions` and leaves `extracted_data` as it arrived.
     extracted_data: { General: { 'Call Summary': { subjective: 'Confirmed interest.' } } },
+    extractions: [
+      {
+        group: 'General',
+        name: 'Call Summary',
+        path: 'General / Call Summary',
+        value: 'Confirmed interest.',
+        confidence: null,
+      },
+    ],
     raw_payload: {
       id: 'exec-newest',
       status: 'completed',

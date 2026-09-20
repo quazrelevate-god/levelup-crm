@@ -238,7 +238,15 @@ test.describe('the call page', () => {
     await expect(page.getByTestId('call-transcript')).toContainText('assistant: Hello Perumal.')
 
     await page.getByTestId('section-extracted-data').getByText('Extracted data').click()
-    await expect(page.getByTestId('call-extracted-data')).toContainText('Call Summary')
+    const extracted = page.getByTestId('call-extracted-data')
+    // Grouped extractions read as "General · Call Summary" with the value
+    // itself, not as a wall of nested JSON.
+    await expect(extracted).toContainText('General · Call Summary')
+    await expect(extracted).toContainText('Confirmed interest.')
+    // The original nesting is still available behind "Show as JSON".
+    await expect(page.getByTestId('call-extracted-json')).toBeHidden()
+    await extracted.getByText('Show as JSON').click()
+    await expect(page.getByTestId('call-extracted-json')).toContainText('subjective')
 
     await page.getByTestId('section-raw-payload').getByText('Raw provider payload').click()
     const raw = page.getByTestId('call-raw-payload')
@@ -249,6 +257,21 @@ test.describe('the call page', () => {
     // And collapsing hides it again.
     await page.getByTestId('section-transcript').getByText('Transcript').click()
     await expect(page.getByTestId('call-transcript')).toBeHidden()
+  })
+
+  test('a call with no extractions says so', async ({ page }) => {
+    await signIn(page, {
+      ...WITH_CALLS,
+      voiceCallDetails: {
+        'call-newest': voiceCallDetail({ extracted_data: {}, extractions: [] }),
+      },
+    })
+    await page.goto('/calls/call-newest')
+
+    await page.getByTestId('section-extracted-data').getByText('Extracted data').click()
+    await expect(page.getByText('Nothing was extracted from this call.')).toBeVisible()
+    // The rest of the call is unaffected.
+    await expect(page.getByTestId('call-summary')).toBeVisible()
   })
 
   test('an unknown call id reads as a message, not an API error', async ({ page }) => {

@@ -41,10 +41,21 @@ export interface VoiceCallSummary {
   readonly completed_at: string | null
 }
 
+/** One extracted item, flattened out of Bolna's grouping by the server. */
+export interface Extraction {
+  readonly group: string | null
+  readonly name: string
+  readonly path: string
+  readonly value: unknown
+  readonly confidence: number | null
+}
+
 export interface VoiceCallDetail extends VoiceCallSummary {
   readonly recipient_phone: string
   readonly transcript: string | null
   readonly extracted_data: Record<string, unknown>
+  /** The same extractions, flattened for display — grouped or not. */
+  readonly extractions: readonly Extraction[]
   /** Sanitised server-side; credential-shaped fields arrive redacted. */
   readonly raw_payload: Record<string, unknown>
   readonly webhook_received_at: string | null

@@ -52,6 +52,7 @@ from app.models.workspace import Workspace
 from app.schemas.voice import VoiceExecutionWebhook
 from app.services.actions import ActionWriter
 from app.services.leads import LeadService
+from app.services.voice_postcall import flatten_extractions
 from app.tenancy.session import ScopedSession
 
 __all__ = ["ExtractionOutcome", "VoiceExtractionService", "summary_disposition_conflict"]
@@ -205,12 +206,23 @@ class VoiceExtractionService:
         mappings = await self._load_mappings()
         identity_key = await self._leads.identity_key()
 
-        for disposition, entry in extracted.items():
-            # A disposition the payload carries that has no enabled mapping is
-            # not an error — an operator might not have mapped every possible
-            # extraction Bolna knows how to produce. Record it in the return
-            # value for observability but do nothing on the timeline.
-            mapping = mappings.get(disposition)
+        # Flatten first. Bolna groups its extractions — `General` holds
+        # `Call Summary` — so iterating the top level would match mappings
+        # against the *group* name and never against the extraction itself.
+        for item in flatten_extractions(extracted):
+            disposition = item.path
+            entry = item.raw
+
+            # A mapping may be written against the extraction's own name
+            # (`Call Summary`) or its full path (`General / Call Summary`).
+            # Both are unambiguous; neither invents a mapping that an operator
+            # did not create.
+            mapping = mappings.get(item.name) or mappings.get(item.path)
+
+            # An extraction with no enabled mapping is not an error — an
+            # operator need not map everything Bolna can produce. It is
+            # reported here, and the Call Details page shows it regardless:
+            # unmapped means "not written to a field", never "discarded".
             if mapping is None:
                 outcome.unmapped.append(disposition)
                 continue
@@ -221,7 +233,9 @@ class VoiceExtractionService:
             # after mappings already exist. Refusing here as well keeps the
             # mapping table's history intact while still not writing.
             if summary_disposition_conflict(
-                disposition, summary_disposition=self._summary_disposition
+                item.name, summary_disposition=self._summary_disposition
+            ) or summary_disposition_conflict(
+                item.path, summary_disposition=self._summary_disposition
             ):
                 await self._note(
                     writer,
@@ -251,6 +265,12 @@ class VoiceExtractionService:
                 continue
 
             value, confidence, invalid = self._extract(entry)
+            # A leaf that spells its value some other way — Bolna's own
+            # `{"subjective": …}` — still has one. The normaliser already
+            # found it; `_extract` only knows the `value` key, so defer to it
+            # rather than treating a present value as an empty one.
+            if value is None and isinstance(item.value, (str, int, float, bool)):
+                value = item.value
 
             if invalid:
                 await self._note(
