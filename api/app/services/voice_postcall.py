@@ -41,6 +41,7 @@ from typing import Any, Protocol, runtime_checkable
 __all__ = [
     "CALLER_PHONE_PATHS",
     "DIRECTION_PATHS",
+    "DISCONNECT_STATUSES",
     "DURATION_PATHS",
     "EXTRACTION_SOURCES",
     "FALLBACK_FAILED",
@@ -83,6 +84,14 @@ TERMINAL_FAILURE_STATUSES = frozenset(
         "call-disconnected",
     }
 )
+
+#: Terminal statuses that describe *how a call ended*, not *whether it
+#: connected*. `call-disconnected` is what Bolna reports when the far end hangs
+#: up — which is how most answered calls end. It stays in
+#: `TERMINAL_FAILURE_STATUSES` (a disconnect with no conversation really is a
+#: failed call), but a disconnect with conversation evidence is a completed one.
+#: See `NormalizedCallResult.had_conversation`.
+DISCONNECT_STATUSES = frozenset({"call-disconnected"})
 
 #: Where the customer's number is. Documented spellings first
 #: (`telephony_data.to_number`, `user_number`); the rest are the defensive
@@ -272,12 +281,28 @@ class NormalizedCallResult:
     error_message: str | None
 
     @property
+    def had_conversation(self) -> bool:
+        """Whether the parties actually spoke, judged from evidence.
+
+        A non-empty transcript or a positive talk time. This is what separates
+        a disconnect after a real conversation from one that never connected —
+        the status string alone cannot, because Bolna reports both as
+        `call-disconnected`.
+        """
+        return bool(self.transcript) or (self.duration_seconds or 0) > 0
+
+    @property
     def succeeded(self) -> bool:
-        return self.status in TERMINAL_SUCCESS_STATUSES
+        if self.status in TERMINAL_SUCCESS_STATUSES:
+            return True
+        # Production, 2026-09-20: an 83-second conversation that the customer
+        # ended arrived as `call-disconnected` and was logged as "ended without
+        # a conversation". The transcript was right there.
+        return self.status in DISCONNECT_STATUSES and self.had_conversation
 
     @property
     def failed(self) -> bool:
-        return self.status in TERMINAL_FAILURE_STATUSES
+        return self.status in TERMINAL_FAILURE_STATUSES and not self.succeeded
 
     @property
     def terminal(self) -> bool:
@@ -376,7 +401,9 @@ class CallSummary:
 
 
 def fallback_summary(call: NormalizedCallResult) -> str:
-    if call.failed:
+    # "Ended without a conversation" is a factual claim. It is only made when
+    # there is no transcript and no talk time — otherwise it is false.
+    if call.failed and not call.had_conversation:
         return FALLBACK_FAILED.format(status=call.status or "unknown")
     if not call.transcript:
         return FALLBACK_NO_TRANSCRIPT
@@ -391,7 +418,7 @@ async def summarize_call(call: NormalizedCallResult, summarizer: CallSummarizer)
     Any exception from the summariser becomes the fallback plus a recorded
     error (its type name only: an exception message can quote the input).
     """
-    if call.failed:
+    if call.failed and not call.had_conversation:
         return CallSummary(text=fallback_summary(call), source=SUMMARY_SOURCE_FALLBACK)
     try:
         text = await summarizer.summarize(call)

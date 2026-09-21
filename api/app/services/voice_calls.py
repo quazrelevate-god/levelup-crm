@@ -57,7 +57,7 @@ from app.fields.rendering import render_for_voice
 from app.integrations.bolna import BolnaCallRequest, BolnaClient, BolnaSettings
 from app.models.enums import ChangesetSource, VoiceCallStatus
 from app.models.field import FieldOption, LeadField
-from app.models.lead import Lead
+from app.models.lead import Action, Lead
 from app.models.pipeline import CallDisposition
 from app.models.voice import VoiceCallExecution
 from app.models.workspace import Workspace
@@ -78,7 +78,9 @@ from app.services.voice_postcall import (
     NormalizedCallResult,
     VendorCallSummarizer,
     dig,
+    extractions_from_payload,
     first_present,
+    flatten_extractions,
     normalise_execution,
     summarize_call,
 )
@@ -653,6 +655,162 @@ class VoiceCallService:
             call_id=row.id,
         )
 
+    # --- upgrading an already-completed call ----------------------------------
+
+    def _upgrade_reasons(self, row: VoiceCallExecution, call: NormalizedCallResult) -> list[str]:
+        """What this delivery adds to a call that has already been recorded.
+
+        Bolna reports a call more than once. At hangup it sends
+        `call-disconnected` carrying the transcript; a few seconds later, once
+        it has summarised and extracted, it sends `completed` carrying both.
+        Production, 2026-09-20: the first was stored and the second — the one
+        with the summary and the extraction — was discarded as a duplicate.
+
+        So a later delivery is weighed rather than refused. It upgrades the row
+        only for something the stored result genuinely lacks, and every reason
+        is *additive*: nothing here can replace an AI summary with a fallback,
+        a completed status with a failed one, or data with emptiness. An empty
+        list means a true duplicate.
+        """
+        if not call.terminal:
+            return []
+
+        reasons: list[str] = []
+        if call.vendor_summary and row.summary_source != SUMMARY_SOURCE_AI:
+            reasons.append("summary")
+        _, stored_extractions = extractions_from_payload(row.raw_payload)
+        if flatten_extractions(call.extracted_data) and not stored_extractions:
+            reasons.append("extraction")
+        if call.succeeded and row.status != VoiceCallStatus.COMPLETED:
+            reasons.append("status")
+        if call.transcript and not row.transcript:
+            reasons.append("transcript")
+        return reasons
+
+    async def _is_latest_call(self, lead: Lead, row: VoiceCallExecution) -> bool:
+        """True when no newer call to this lead has already completed.
+
+        An upgrade must never roll the lead's continuity summary back: if call
+        B finished after call A, a late upgrade to A is recorded on A's own row
+        and call log, but `last_call_summary` stays B's.
+        """
+        rows = await self._session.execute(
+            self._session.select(VoiceCallExecution)
+            .where(
+                VoiceCallExecution.lead_id == lead.id,
+                VoiceCallExecution.id != row.id,
+                VoiceCallExecution.created_at > row.created_at,
+                VoiceCallExecution.completed_at.is_not(None),
+            )
+            .limit(1)
+        )
+        return rows.scalar_one_or_none() is None
+
+    async def _upgrade(
+        self,
+        payload: VoiceExecutionWebhook,
+        call: NormalizedCallResult,
+        lead: Lead,
+        row: VoiceCallExecution,
+        external_id: str,
+        reasons: list[str],
+        now: dt.datetime,
+    ) -> WebhookOutcome:
+        """Fold a richer terminal delivery into the call already recorded.
+
+        Updates the *same* row and the *same* `CALL_LOGGED` action — there is
+        still exactly one call and one timeline entry. The call log is edited
+        in place rather than appended to because it describes one call whose
+        result arrived in two parts; a second entry would read as a second call.
+
+        Only ever adds: a transcript or duration the new body lacks is kept from
+        the old one, and an AI summary already stored is never replaced.
+        """
+        row.bolna_status = payload.status
+        row.webhook_received_at = now
+        row.raw_payload = payload.model_dump(mode="json")
+        if call.transcript:
+            row.transcript = call.transcript
+        if call.duration_seconds:
+            row.duration_seconds = call.duration_seconds
+        duration = row.duration_seconds or 0
+
+        # The summary: re-run against the richer body, and keep the result only
+        # if it is better than what is stored.
+        written = False
+        if row.summary_source != SUMMARY_SOURCE_AI:
+            summary = await summarize_call(call, self._summarizer)
+            if summary.source == SUMMARY_SOURCE_AI or row.summary is None:
+                row.summary = summary.text
+                row.summary_source = summary.source
+                row.summary_error = summary.error
+            if summary.source == SUMMARY_SOURCE_AI and await self._is_latest_call(lead, row):
+                _, written = await self._context.update_last_call_summary(
+                    lead, summary=summary.text, external_id=external_id, record_note=False
+                )
+
+        if call.succeeded:
+            row.status = VoiceCallStatus.COMPLETED
+
+        # The one call log, brought up to date.
+        if row.call_action_id is not None:
+            action = await self._session.get(Action, row.call_action_id)
+            if action is not None:
+                updated = dict(action.payload or {})
+                disposition = await self._disposition_for(
+                    status=call.status, duration=duration, succeeded=call.succeeded
+                )
+                if disposition is not None:
+                    updated["disposition_id"] = str(disposition.id)
+                updated.update(
+                    {
+                        "notes": row.summary,
+                        "duration_seconds": duration,
+                        "call_status": call.status or None,
+                        "summary_source": row.summary_source,
+                        "has_transcript": bool(row.transcript),
+                    }
+                )
+                # A new dict, so the JSONB change is actually detected.
+                action.payload = updated
+                action.body = row.summary
+
+        # Extraction, only when this delivery is the first to bring any. A
+        # delivery repeating extractions already applied must not apply them
+        # twice (a second low-confidence note is still a duplicate entry).
+        extraction = ExtractionOutcome()
+        if "extraction" in reasons and call.succeeded:
+            extraction_writer = ActionWriter(self._session, actor_id=self._actor_id)
+            await extraction_writer.open_changeset(
+                source=ChangesetSource.AUTOMATION,
+                summary=f"Voice extraction applied on {lead.identity_value}",
+            )
+            extractor = VoiceExtractionService(
+                self._session,
+                workspace=self._workspace,
+                leads=self._leads,
+                actor_id=self._actor_id,
+                summary_disposition=(self._config.summary_disposition if self._config else None),
+            )
+            extraction = await extractor.apply(payload, lead, extraction_writer)
+
+        # When the authoritative result arrived.
+        row.completed_at = now
+        await self._session.commit()
+
+        logger.info(
+            "voice.webhook upgraded execution=%s lead=%s status=%s summary=%s reasons=%s",
+            external_id,
+            lead.id,
+            call.status or "-",
+            row.summary_source,
+            ",".join(reasons),
+        )
+        outcome = await self._outcome("upgraded", lead, row, external_id)
+        outcome.written = written
+        outcome.extraction = extraction
+        return outcome
+
     async def handle_execution(self, payload: VoiceExecutionWebhook) -> WebhookOutcome:
         """Process one Bolna delivery. Safe to call any number of times.
 
@@ -692,11 +850,17 @@ class VoiceCallService:
         lead, row = await self._lead_for_payload(call, external_id=external_id)
         now = dt.datetime.now(dt.UTC)
 
-        # The idempotency gate. Everything after the first terminal delivery for
-        # this execution is a no-op, however many times Bolna retries.
+        # The idempotency gate — with one deliberate exception. A terminal
+        # delivery that carries something the stored result lacks (Bolna's
+        # summary, its extractions, or a completed status) *upgrades* the row
+        # instead of being dropped. Everything else after the first terminal
+        # delivery is a no-op, however many times Bolna retries.
         if row.completed_at is not None:
-            logger.info("voice.webhook duplicate execution=%s lead=%s", external_id, lead.id)
-            return await self._outcome("duplicate", lead, row, external_id)
+            reasons = self._upgrade_reasons(row, call)
+            if not reasons:
+                logger.info("voice.webhook duplicate execution=%s lead=%s", external_id, lead.id)
+                return await self._outcome("duplicate", lead, row, external_id)
+            return await self._upgrade(payload, call, lead, row, external_id, reasons, now)
 
         row.bolna_status = payload.status
         row.webhook_received_at = now

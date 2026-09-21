@@ -201,7 +201,9 @@ class VoiceExecutionResult(BaseModel):
     """
 
     #: `accepted` (written back), `duplicate` (already processed, no-op),
-    #: `pending` (a non-terminal status update, recorded but nothing written).
+    #: `pending` (a non-terminal status update, recorded but nothing written),
+    #: `upgraded` (an already-recorded call completed by a richer delivery —
+    #: same row, same call log; see `VoiceCallService._upgrade_reasons`).
     status: str
     execution_id: str | None = None
     lead_id: uuid.UUID | None = None
