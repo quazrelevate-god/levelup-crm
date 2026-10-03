@@ -64,6 +64,7 @@ from app.models.workspace import Workspace
 from app.schemas.voice import VoiceExecutionWebhook
 from app.services.actions import ActionWriter
 from app.services.leads import LeadService
+from app.services.program_context import ProgramContextService
 from app.services.voice_context import VoiceContext, VoiceContextService
 from app.services.voice_extraction import ExtractionOutcome, VoiceExtractionService
 from app.services.voice_postcall import (
@@ -206,6 +207,7 @@ class VoiceCallService:
         match_by_phone: bool = True,
         create_missing_leads: bool = False,
         summarizer: CallSummarizer | None = None,
+        program_context: ProgramContextService | None = None,
     ) -> None:
         self._session = session
         self._workspace = workspace
@@ -222,6 +224,8 @@ class VoiceCallService:
         # Bolna's own LLM summary unless a test (or a later CRM-side model)
         # supplies another. See `app.services.voice_postcall`.
         self._summarizer: CallSummarizer = summarizer or VendorCallSummarizer()
+        # Inert when the deployment has no knowledge base configured.
+        self._program_context = program_context or ProgramContextService(None)
 
     # --- configuration ------------------------------------------------------
 
@@ -319,6 +323,17 @@ class VoiceCallService:
         ]
         if recent:
             user_data["crm_recent_notes"] = " | ".join(str(item) for item in recent)
+
+        # The programme the lead enquired about, summarised from the knowledge
+        # base so common questions are answered without a retrieval hop. The
+        # programme is identified by *value*: whichever submitted value matches
+        # a published course title or slug exactly. No lead field is named here
+        # — a workspace may call it Course, Programme or anything else, and the
+        # H2 headline slot defaults to Phone, so neither can be assumed. Adds
+        # `crm_program_name` and `crm_program_context`, or nothing at all when
+        # no programme matches, several do, or the KB is unreachable. No
+        # programme fact is stored by the CRM (docs/13).
+        user_data.update(await self._program_context.for_values(context.values))
         return user_data
 
     async def trigger(self, lead: Lead, *, agent_id: str | None = None) -> TriggerOutcome:

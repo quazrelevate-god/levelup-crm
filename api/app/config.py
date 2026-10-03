@@ -156,6 +156,14 @@ class Settings(BaseSettings):
     #: identity field is its phone field; goes through the one create path.
     bolna_create_missing_leads: bool = False
 
+    #: Base URL of the LevelUp Learning knowledge base, e.g.
+    #: https://kb-production.up.railway.app. When set, the voice trigger reads
+    #: the KB's own search index and passes a compact, customer-facing summary
+    #: of the lead's programme to the agent as `crm_program_context`. Unset
+    #: means no context is sent and calls behave exactly as before — the CRM
+    #: never stores programme facts either way.
+    kb_base_url: str | None = None
+
     # --- Tally form intake -------------------------------------------------
     #: Tally's optional webhook signing secret. Unset means the signature is
     #: not checked, which is the correct default: the API key is the actual

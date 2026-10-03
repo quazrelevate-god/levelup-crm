@@ -60,6 +60,7 @@ from app.schemas.voice import (
     VoiceSummaryUpdateResult,
 )
 from app.services.leads import LeadService
+from app.services.program_context import ProgramContextService
 from app.services.voice_calls import VoiceCallService
 from app.services.voice_context import VoiceContext, VoiceContextService
 from app.services.voice_history import CallWithLead, VoiceCallHistoryService
@@ -182,6 +183,7 @@ async def _voice_call_service(
         actor_id=scope.membership_id,
         match_by_phone=request.app.state.settings.bolna_match_by_phone,
         create_missing_leads=request.app.state.settings.bolna_create_missing_leads,
+        program_context=ProgramContextService(request.app.state.settings.kb_base_url),
     )
 
 
