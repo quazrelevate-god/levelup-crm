@@ -64,14 +64,20 @@ logger = logging.getLogger(__name__)
 #: material when a caller actually asks.
 SECTION_PRIORITY: tuple[tuple[str, str, int], ...] = (
     ("01-program-identity", "Identity, duration, delivery, schedule, audience", 620),
-    ("07-pricing-and-cohorts", "Pricing and payment", 420),
+    ("07-pricing-and-cohorts", "Pricing and payment", 520),
     ("02-questions-and-answers", "Common questions", 380),
 )
 
 #: Hard ceiling on the final value, applied after labels and newlines are added.
 #: Bolna documents no limit for a `user_data` value; this is deliberately modest
 #: so a long programme page cannot bloat every LLM call on the conversation.
-MAX_CONTEXT_CHARS = 1500
+#:
+#: Raised from 1500 once measurement showed the pricing allowance was the
+#: binding constraint: a section that opens with a "confirm current pricing"
+#: disclaimer spent its whole window on the preamble, and the schedule and
+#: payment-timeline tails never reached the agent. The extra room is spent
+#: there, not spread around — see `SECTION_PRIORITY`.
+MAX_CONTEXT_CHARS = 1800
 
 #: Where course pages live in the knowledge base.
 COURSES_ROOT = "03-courses/"

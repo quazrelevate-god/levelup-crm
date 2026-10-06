@@ -63,6 +63,7 @@ from app.models.voice import VoiceCallExecution
 from app.models.workspace import Workspace
 from app.schemas.voice import VoiceExecutionWebhook
 from app.services.actions import ActionWriter
+from app.services.lead_context import LeadContextBuilder
 from app.services.leads import LeadService
 from app.services.program_context import ProgramContextService
 from app.services.voice_context import VoiceContext, VoiceContextService
@@ -226,6 +227,8 @@ class VoiceCallService:
         self._summarizer: CallSummarizer = summarizer or VendorCallSummarizer()
         # Inert when the deployment has no knowledge base configured.
         self._program_context = program_context or ProgramContextService(None)
+        # No I/O and no configuration: it only reshapes what is already loaded.
+        self._lead_context = LeadContextBuilder()
 
     # --- configuration ------------------------------------------------------
 
@@ -323,6 +326,23 @@ class VoiceCallService:
         ]
         if recent:
             user_data["crm_recent_notes"] = " | ".join(str(item) for item in recent)
+
+        # What this caller's own record says, labelled with the workspace's own
+        # field labels rather than JSONB keys, so the agent can answer "what did
+        # I tell you I was looking for?" — and, because the context lists only
+        # what is recorded, can say plainly that an enrolment or payment date is
+        # not. Built from `rendered`, so the projection and rendering
+        # chokepoints are the same ones every other read uses. Omitted entirely
+        # when the record has nothing worth saying.
+        lead_context = self._lead_context.build(
+            rendered,
+            fields,
+            stage_name=context.stage_name,
+            timezone_name=self._workspace.timezone,
+            created_at=context.created_at,
+        )
+        if lead_context:
+            user_data["crm_lead_context"] = lead_context
 
         # The programme the lead enquired about, summarised from the knowledge
         # base so common questions are answered without a retrieval hop. The

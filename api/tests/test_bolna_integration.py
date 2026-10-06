@@ -354,6 +354,40 @@ async def test_the_outbound_payload_carries_the_customer_context(
     assert sent["crm_stage"]
 
 
+async def test_the_outbound_payload_carries_the_caller_context(
+    api: AsyncClient, workspace: WorkspaceFixture, bolna: RecordingBolnaClient
+) -> None:
+    """`crm_lead_context` rides alongside, and the keys beside it do not move.
+
+    The builder itself is covered in `test_lead_context.py`. What this pins is
+    that it reaches the vendor request, and that adding it changed nothing
+    about `crm_stage` or the programme keys.
+    """
+    headers = await _admin(api, workspace)
+    lead = await _create_lead(api, workspace)
+
+    response = await _trigger(api, workspace, headers, lead_id=lead["id"])
+    assert response.status_code == 200, response.text
+
+    sent = bolna.last
+    assert isinstance(sent, BolnaCallRequest)
+    context = sent.user_data["crm_lead_context"]
+    # The admin's label, not the JSONB key.
+    assert "Name: Test Customer" in context
+    assert "Enquiry received:" in context
+    assert f"Stage: {sent.user_data['crm_stage']}" in context
+    # Contact details stay in the bare keys and out of the caller context.
+    assert "+919876543210" not in context
+    assert "test.customer@example.com" not in context
+    assert lead["id"] not in context
+
+    # Unchanged: the stage is still the stage, and with no knowledge base
+    # configured the programme keys are still absent — exactly as before.
+    assert sent.user_data["crm_stage"]
+    assert "crm_program_name" not in sent.user_data
+    assert "crm_program_context" not in sent.user_data
+
+
 async def test_a_field_the_template_cannot_view_never_reaches_bolna(
     api: AsyncClient,
     workspace: WorkspaceFixture,

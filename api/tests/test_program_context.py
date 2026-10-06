@@ -377,6 +377,9 @@ async def test_existing_user_data_is_unchanged_and_two_keys_are_added(
         "crm_is_repeat_caller",
         "crm_stage",
         "crm_owner",
+        # The caller context (`app.services.lead_context`) rides alongside and
+        # is tested in `test_lead_context.py`; this test is about the programme.
+        "crm_lead_context",
     }
     assert added == {"crm_program_name", "crm_program_context"}
     assert user_data["crm_program_name"] == "Tide Pool Diving"
@@ -462,3 +465,174 @@ async def test_a_lead_with_no_programme_value_still_calls_cleanly(
     assert "crm_program_name" not in user_data
     assert user_data["name"] == "Alan"
     assert bolna.last.user_data == user_data
+
+
+# --- the budget, after the pricing allowance was raised -------------------------
+#
+# These pin the two numbers that were deliberately changed, and the four
+# properties that must survive the change. They use their own fixture index,
+# shaped like the real knowledge base but carrying no real programme or figure,
+# so nothing here reaches the network and no customer fact is committed.
+
+#: A pricing section that opens with a maintainer-facing disclaimer and only
+#: then states the fee — the shape that made the old 420-char window spend
+#: itself on the preamble. The fee sits past character 420 on purpose.
+_DISCLAIMER = (
+    "Note Commercial information can change. Always confirm current pricing and "
+    "availability with the admissions team before sharing it with a lead. Prices "
+    "below are indicative and are reviewed every intake, so treat them as a guide "
+    "rather than a quotation, and never commit a caller to an amount that has not "
+    "been confirmed by admissions for the intake they are actually applying to. "
+    "Confirm the figure for the intake being applied to. "
+)
+_FEE_BLOCK = (
+    "Harbour Fee 85,000 Includes: Residential stay Meals Full experience "
+    "Not Included: Travel Application Fee 800-900 Refundable if not selected "
+    "Booking Amount Paid within 24 hours after selection Confirms place "
+    "Remaining Balance Paid according to the admissions timeline Venue Harbour"
+)
+_LONG_PRICING = _DISCLAIMER + _FEE_BLOCK
+
+#: Where the old window stopped and the new one reaches.
+_OLD_PRICING_ALLOWANCE = 420
+
+
+def _budget_index() -> list[dict[str, str]]:
+    """One fictional programme whose every section overflows its allowance."""
+    slug, title = "01-harbour-navigation", "Harbour Navigation"
+    filler = "identity " * 200
+    qa = "Answer: a question and its answer. " * 200
+    return [
+        _page(f"03-courses/{slug}/", title, "<p>The Harbour Navigation knowledge base.</p>"),
+        _page(
+            f"03-courses/{slug}/01-program-identity/#x",
+            "Identity",
+            f"<p>{title} runs for 9 weeks, live online, on weekends. {filler}</p>",
+        ),
+        _page(f"03-courses/{slug}/07-pricing-and-cohorts/#x", "Pricing", f"<p>{_LONG_PRICING}</p>"),
+        _page(f"03-courses/{slug}/02-questions-and-answers/#x", "Q&A", f"<p>{qa}</p>"),
+        _page(
+            f"03-courses/{slug}/03-persona-positioning/#x",
+            "Persona",
+            "<p>This guide helps admissions agents position the programme. "
+            "Emphasize that the learner does not need everything figured out.</p>",
+        ),
+    ]
+
+
+#: A second base URL, because the index cache is keyed by it: a test that uses
+#: both fixture indexes at once would otherwise serve one from the other's
+#: cache entry.
+KB_BUDGET = "https://kb-budget.invalid"
+
+
+@pytest.fixture
+def budget_service(monkeypatch: pytest.MonkeyPatch) -> ProgramContextService:
+    async def _docs(self: ProgramContextService) -> list[dict[str, str]]:
+        return _budget_index()
+
+    monkeypatch.setattr(ProgramContextService, "_load_docs", _docs)
+    return ProgramContextService(KB_BUDGET)
+
+
+def test_the_ceiling_is_1800() -> None:
+    assert MAX_CONTEXT_CHARS == 1800
+
+
+def test_the_section_table_is_the_approved_one() -> None:
+    """The two changed numbers, and the three that were not to change.
+
+    Ordering is part of the contract: identity first, then pricing, then the
+    FAQ slice, because the ceiling trims from the end.
+    """
+    assert pc.SECTION_PRIORITY == (
+        ("01-program-identity", "Identity, duration, delivery, schedule, audience", 620),
+        ("07-pricing-and-cohorts", "Pricing and payment", 520),
+        ("02-questions-and-answers", "Common questions", 380),
+    )
+
+
+def test_the_persona_section_is_not_a_source() -> None:
+    """It is written for whoever operates the agent, not for a caller."""
+    assert not any(section.startswith("03-") for section, _, _ in pc.SECTION_PRIORITY)
+    assert "03-persona-positioning" not in {s for s, _, _ in pc.SECTION_PRIORITY}
+
+
+async def test_no_persona_content_reaches_the_context(
+    budget_service: ProgramContextService,
+) -> None:
+    """Its maintainer-facing framing must never be in front of a caller."""
+    context = (await budget_service.for_values({"course": "Harbour Navigation"}))[
+        "crm_program_context"
+    ]
+    for forbidden in ("helps admissions agents", "Emphasize", "position the programme"):
+        assert forbidden not in context, f"persona text {forbidden!r} reached the caller context"
+
+
+async def test_a_programme_that_overflows_every_section_stays_within_the_ceiling(
+    budget_service: ProgramContextService,
+) -> None:
+    """Every section longer than its allowance, so the ceiling is what binds."""
+    context = (await budget_service.for_values({"course": "Harbour Navigation"}))[
+        "crm_program_context"
+    ]
+    assert 0 < len(context) <= MAX_CONTEXT_CHARS, len(context)
+
+
+async def test_every_programme_in_the_index_stays_within_the_ceiling(
+    service: ProgramContextService,
+) -> None:
+    """Checked per programme, not just for the biggest one."""
+    for course in ("Tide Pool Diving", "Kite Repair"):
+        context = (await service.for_values({"course": course}))["crm_program_context"]
+        assert 0 < len(context) <= MAX_CONTEXT_CHARS, (course, len(context))
+
+
+async def test_identity_and_questions_still_reach_the_caller(
+    budget_service: ProgramContextService,
+) -> None:
+    """Raising the pricing allowance must not evict what was already there."""
+    context = (await budget_service.for_values({"course": "Harbour Navigation"}))[
+        "crm_program_context"
+    ]
+    assert "Identity, duration, delivery, schedule, audience:" in context
+    assert "9 weeks, live online, on weekends" in context
+    assert "Common questions:" in context
+    assert "a question and its answer" in context
+
+
+async def test_pricing_gains_about_a_hundred_characters(
+    budget_service: ProgramContextService,
+) -> None:
+    """The pricing line is now ~520 chars of body rather than ~420."""
+    context = (await budget_service.for_values({"course": "Harbour Navigation"}))[
+        "crm_program_context"
+    ]
+    line = next(ln for ln in context.splitlines() if ln.startswith("Pricing and payment:"))
+    body = line.split("Pricing and payment: ", 1)[1].rstrip("…").rstrip()
+    allowance = {s: a for s, _, a in pc.SECTION_PRIORITY}["07-pricing-and-cohorts"]
+    assert allowance == 520
+    # Trimming is on a word boundary, so the body lands just under the allowance.
+    assert allowance - 20 <= len(body) <= allowance
+    assert len(body) - _OLD_PRICING_ALLOWANCE >= 80
+
+
+async def test_a_disclaimer_first_pricing_section_still_yields_the_fee(
+    budget_service: ProgramContextService,
+) -> None:
+    """The reason the allowance was raised.
+
+    A section whose first 420 characters are a "confirm with admissions"
+    preamble used to reach the agent with no amount in it at all. The fee in
+    this fixture sits past that point, so this fails on the old allowance and
+    passes on the new one.
+    """
+    assert _LONG_PRICING.index("Harbour Fee") > _OLD_PRICING_ALLOWANCE
+    context = (await budget_service.for_values({"course": "Harbour Navigation"}))[
+        "crm_program_context"
+    ]
+    # The headline amount now arrives. The rest of the fee block still does not
+    # fit, and is still answerable from the knowledge base — the point of the
+    # change is that the agent is no longer handed a window with no figure in it.
+    assert "85,000" in context
+    assert "Harbour Fee" in context
