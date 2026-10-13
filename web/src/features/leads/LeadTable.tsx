@@ -19,6 +19,7 @@ import type { Lead, LeadField, MemberDetail, Stage } from '@/api/types'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { BUILTIN_COLUMN_IDS, BUILTIN_COLUMNS } from '@/features/leads/columns'
+import { StarRating } from '@/features/leads/StarRating'
 import { toDisplayStringOr } from '@/lib/format'
 
 export interface LeadTableProps {
@@ -116,6 +117,8 @@ export function LeadTable({
                 return <span className="font-medium">{lead.identity_value}</span>
               case 'stage_id':
                 return <StageCell lead={lead} stages={stages} />
+              case 'rating':
+                return <StarRating value={lead.rating} size="sm" />
               case 'assignee_id':
                 return (
                   <span>

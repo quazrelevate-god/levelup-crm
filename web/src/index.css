@@ -83,17 +83,17 @@
   --popover: oklch(0.995 0.002 264);
   --popover-foreground: oklch(0.21 0.03 264);
 
-  /* The brand hue is the chart blue's family, widened. The charts were the
-   * only colour in the old build and read as foreign to their own chrome;
-   * sharing a hue is what stops that. */
-  --primary: oklch(0.54 0.188 266);
+  /* Neutral by request. Highlight is carried by weight and value, not hue —
+   * which also means the one genuinely coloured thing left on screen is a
+   * status (destructive, success, warning), so colour always means something. */
+  --primary: oklch(0.33 0.006 264);
   --primary-foreground: oklch(0.99 0.002 264);
   --secondary: oklch(0.94 0.012 264);
   --secondary-foreground: oklch(0.3 0.04 264);
   --muted: oklch(0.945 0.008 264);
   --muted-foreground: oklch(0.52 0.025 264);
-  --accent: oklch(0.93 0.035 266);
-  --accent-foreground: oklch(0.36 0.12 266);
+  --accent: oklch(0.925 0.005 264);
+  --accent-foreground: oklch(0.33 0.006 264);
 
   --destructive: oklch(0.577 0.225 27.3);
   --destructive-foreground: oklch(0.99 0.002 264);
@@ -104,7 +104,7 @@
 
   --border: oklch(0.89 0.008 264);
   --input: oklch(0.91 0.008 264);
-  --ring: oklch(0.54 0.188 266);
+  --ring: oklch(0.47 0.006 264);
 
   /* Glass — chrome only. */
   --glass-bg: oklch(0.995 0.002 264 / 72%);
@@ -133,14 +133,14 @@
   --popover: oklch(0.235 0.02 264);
   --popover-foreground: oklch(0.96 0.004 264);
 
-  --primary: oklch(0.68 0.16 266);
-  --primary-foreground: oklch(0.17 0.03 264);
+  --primary: oklch(0.87 0.004 264);
+  --primary-foreground: oklch(0.2 0.01 264);
   --secondary: oklch(0.29 0.022 264);
   --secondary-foreground: oklch(0.94 0.006 264);
   --muted: oklch(0.28 0.02 264);
   --muted-foreground: oklch(0.72 0.02 264);
-  --accent: oklch(0.33 0.055 266);
-  --accent-foreground: oklch(0.88 0.06 266);
+  --accent: oklch(0.32 0.008 264);
+  --accent-foreground: oklch(0.92 0.004 264);
 
   --destructive: oklch(0.7 0.19 22.2);
   --destructive-foreground: oklch(0.16 0.02 264);
@@ -151,7 +151,7 @@
 
   --border: oklch(1 0 0 / 11%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.68 0.16 266);
+  --ring: oklch(0.65 0.006 264);
 
   --glass-bg: oklch(0.235 0.02 264 / 68%);
   --glass-border: oklch(1 0 0 / 11%);
@@ -187,15 +187,15 @@
      * something to refract; without it, blur over a flat colour is invisible
      * and the effect costs GPU for nothing. */
     background-image:
-      radial-gradient(1200px 680px at 8% -10%, oklch(0.54 0.188 266 / 7%), transparent 60%),
-      radial-gradient(1000px 600px at 100% 0%, oklch(0.6 0.13 210 / 6%), transparent 55%);
+      radial-gradient(1200px 680px at 8% -10%, oklch(0.42 0.006 264 / 6%), transparent 60%),
+      radial-gradient(1000px 600px at 100% 0%, oklch(0.42 0.004 264 / 5%), transparent 55%);
     background-attachment: fixed;
   }
 
   .dark body {
     background-image:
-      radial-gradient(1200px 680px at 8% -10%, oklch(0.68 0.16 266 / 13%), transparent 60%),
-      radial-gradient(1000px 600px at 100% 0%, oklch(0.6 0.13 210 / 9%), transparent 55%);
+      radial-gradient(1200px 680px at 8% -10%, oklch(0.75 0.004 264 / 7%), transparent 60%),
+      radial-gradient(1000px 600px at 100% 0%, oklch(0.75 0.004 264 / 5%), transparent 55%);
   }
 
   /* Native controls follow the brand instead of the OS blue. The old build had
@@ -207,7 +207,7 @@
   }
 
   ::selection {
-    background: oklch(0.54 0.188 266 / 22%);
+    background: oklch(0.45 0.006 264 / 20%);
   }
 
   ::-webkit-scrollbar {
@@ -304,7 +304,7 @@
  */
 .viz-root {
   --viz-surface: oklch(0.995 0.002 264);
-  --viz-series: #2a78d6;
+  --viz-series: #55544f;
   --viz-ink: oklch(0.21 0.03 264);
   --viz-ink-secondary: oklch(0.42 0.025 264);
   --viz-ink-muted: oklch(0.58 0.02 264);
@@ -314,7 +314,7 @@
 
 .dark .viz-root {
   --viz-surface: oklch(0.235 0.02 264);
-  --viz-series: #3987e5;
+  --viz-series: #b5b3ab;
   --viz-ink: oklch(0.96 0.004 264);
   --viz-ink-secondary: oklch(0.78 0.015 264);
   --viz-ink-muted: oklch(0.64 0.02 264);

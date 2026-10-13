@@ -128,7 +128,7 @@ export function CallDetailPage() {
 
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-muted-foreground text-sm">🤖 AI Call</p>
+          <p className="text-muted-foreground text-sm">AI Call</p>
           <h1 className="text-2xl font-semibold tracking-tight">
             {toDisplayStringOr(detail.lead.primary_h1, detail.lead.identity_value)}
           </h1>

@@ -32,6 +32,7 @@ export const BUILTIN_COLUMN_IDS: ReadonlySet<string> = new Set(
 export const DEFAULT_COLUMNS: readonly string[] = [
   'identity_value',
   'stage_id',
+  'rating',
   'assignee_id',
   'last_action_at',
 ]
