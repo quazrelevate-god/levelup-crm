@@ -7,11 +7,12 @@ country code, timezone, currency and taxonomy are database rows, not env vars.
 
 from __future__ import annotations
 
+import json
 from functools import lru_cache
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 Environment = Literal["local", "test", "staging", "production"]
 
@@ -145,7 +146,7 @@ class Settings(BaseSettings):
     #: other source is refused before the key is even looked at. Empty means the
     #: check is off, which is correct behind a proxy that rewrites the peer
     #: address and wrong on a directly exposed host.
-    bolna_webhook_allowed_ips: list[str] = Field(default_factory=list)
+    bolna_webhook_allowed_ips: Annotated[list[str], NoDecode] = Field(default_factory=list)
     #: Match an incoming call to a lead by its phone number when the payload
     #: carries no `crm_lead_id` and the CRM did not place the call. Required for
     #: inbound calls and for any call started from Bolna's own dashboard.
@@ -180,6 +181,22 @@ class Settings(BaseSettings):
     #: A schedule that has not run in this long is caught up once, not once per
     #: missed occurrence — nobody wants 300 backdated reports after an outage.
     scheduler_max_catchup_hours: int = 24
+
+    @field_validator("bolna_webhook_allowed_ips", mode="before")
+    @classmethod
+    def _parse_allowed_ips(cls, value: object) -> object:
+        """Let an empty value mean "off", which is what the key documents.
+
+        `NoDecode` is what makes this reachable. Without it pydantic-settings
+        JSON-decodes the field inside the dotenv source, and `KEY=` is not valid
+        JSON — so it raised a `SettingsError` there, before any validator ran,
+        and a stock `cp .env.example .env` took down the API and the worker. A
+        non-empty value is still JSON, exactly as before.
+        """
+        if not isinstance(value, str):
+            return value
+        text = value.strip()
+        return json.loads(text) if text else []
 
     @field_validator("database_url")
     @classmethod
