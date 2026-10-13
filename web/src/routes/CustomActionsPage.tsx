@@ -194,7 +194,7 @@ export function CustomActionsPage() {
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-xl font-semibold">Custom actions</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Custom actions</h1>
         <p className="text-muted-foreground text-sm">
           User-defined timeline events, each with its own form. Codes are assigned per workspace
           from 1001.

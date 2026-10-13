@@ -44,7 +44,18 @@ function StageCell({ lead, stages }: { readonly lead: Lead; readonly stages: rea
   const stage = stages.find((candidate) => candidate.id === lead.stage_id)
   if (!stage) return <span className="text-muted-foreground">—</span>
   return (
-    <Badge variant="outline" style={{ borderColor: stage.color, color: stage.color }}>
+    <Badge
+      variant="outline"
+      // The admin picked this colour for this stage, so it has to survive into
+      // the chip. A faint wash of the same hue reads as a group marker; the
+      // text and border stay at full strength to keep the label legible on any
+      // of them.
+      style={{
+        borderColor: `color-mix(in oklch, ${stage.color} 38%, transparent)`,
+        backgroundColor: `color-mix(in oklch, ${stage.color} 12%, transparent)`,
+        color: stage.color,
+      }}
+    >
       {stage.label}
     </Badge>
   )
@@ -165,10 +176,10 @@ export function LeadTable({
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
-        <thead>
+        <thead className="bg-muted/45">
           {table.getHeaderGroups().map((headerGroup) => (
-            <tr key={headerGroup.id} className="border-b text-left">
-              <th className="w-8 px-3 py-2">
+            <tr key={headerGroup.id} className="border-border/70 border-b text-left">
+              <th className="w-10 px-4 py-2.5">
                 <input
                   type="checkbox"
                   aria-label="Select every lead on this page"
@@ -180,7 +191,10 @@ export function LeadTable({
                 const id = header.column.id
                 const canSort = sortableColumn(id)
                 return (
-                  <th key={header.id} className="text-muted-foreground px-3 py-2 font-medium">
+                  <th
+                    key={header.id}
+                    className="text-muted-foreground px-4 py-2.5 text-[0.6875rem] font-semibold tracking-wider uppercase"
+                  >
                     {canSort ? (
                       <button
                         type="button"
@@ -208,10 +222,10 @@ export function LeadTable({
             <tr
               key={row.id}
               data-testid="lead-row"
-              className="hover:bg-muted/50 cursor-pointer border-b last:border-0"
+              className="border-border/45 hover:bg-primary/[0.045] cursor-pointer border-b transition-colors duration-100 last:border-0"
               onClick={() => onSelect(row.original.id)}
             >
-              <td className="px-3 py-2" onClick={(event) => event.stopPropagation()}>
+              <td className="px-4 py-2.5" onClick={(event) => event.stopPropagation()}>
                 <input
                   type="checkbox"
                   aria-label={`Select ${row.original.identity_value}`}
@@ -220,7 +234,7 @@ export function LeadTable({
                 />
               </td>
               {row.getVisibleCells().map((cell) => (
-                <td key={cell.id} className="px-3 py-2">
+                <td key={cell.id} className="px-4 py-2.5">
                   {flexRender(cell.column.columnDef.cell, cell.getContext())}
                 </td>
               ))}

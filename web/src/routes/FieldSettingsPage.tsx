@@ -116,7 +116,7 @@ export function FieldSettingsPage() {
     <div className="space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold">Lead fields</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Lead fields</h1>
           <p className="text-muted-foreground text-sm">
             {all.length} field{all.length === 1 ? '' : 's'} · {fieldTypes.data?.length ?? 0} types
             available

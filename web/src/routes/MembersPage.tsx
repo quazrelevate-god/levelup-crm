@@ -92,7 +92,7 @@ export function MembersPage() {
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold">Team</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Team</h1>
           {seats.data ? (
             <p className="text-muted-foreground text-sm">
               {seats.data.seats_used} of {seats.data.seat_limit} licensed seats in use

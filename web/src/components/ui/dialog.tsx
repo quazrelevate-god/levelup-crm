@@ -57,8 +57,10 @@ function Dialog({ open, onClose, title, description, children, footer, className
         onClose()
       }}
       className={cn(
-        'bg-background text-foreground w-full max-w-lg rounded-lg border p-0 shadow-lg',
-        'open:animate-in backdrop:bg-black/50',
+        'glass text-foreground shadow-e3 w-full max-w-lg rounded-2xl border p-0',
+        // The backdrop blurs the page behind rather than only dimming it, which
+        // is what makes a translucent panel legible instead of busy.
+        'open:animate-in backdrop:bg-black/35 backdrop:backdrop-blur-sm',
         className,
       )}
     >

@@ -227,7 +227,7 @@ export function LeadDetail({
 
   return (
     <aside
-      className="bg-background fixed inset-y-0 right-0 z-40 w-full max-w-2xl overflow-y-auto border-l p-6 shadow-xl"
+      className="glass shadow-e3 fixed inset-y-0 right-0 z-40 w-full max-w-2xl overflow-y-auto border-l p-6"
       aria-label="Lead detail"
       data-testid="lead-detail"
     >

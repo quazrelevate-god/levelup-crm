@@ -149,7 +149,7 @@ export function PipelineSettingsPage() {
     <div className="space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold">Pipeline and taxonomy</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Pipeline and taxonomy</h1>
           <p className="text-muted-foreground text-sm">
             Stages, lost reasons and call outcomes — all of them this workspace&rsquo;s own words.
           </p>

@@ -20,6 +20,8 @@ import { PermissionsPage } from '@/routes/PermissionsPage'
 import { PipelineSettingsPage } from '@/routes/PipelineSettingsPage'
 import { RequireAuth } from '@/routes/RequireAuth'
 import { ScheduledReportsPage } from '@/routes/ScheduledReportsPage'
+import { SettingsLayout } from '@/routes/SettingsLayout'
+import { SettingsOverviewPage } from '@/routes/SettingsOverviewPage'
 import { SystemStatusPage } from '@/routes/SystemStatusPage'
 import { TasksPage } from '@/routes/TasksPage'
 import { TemplatesPage } from '@/routes/TemplatesPage'
@@ -56,16 +58,29 @@ export const router = createBrowserRouter([
       { path: 'edit-report', element: <EditReportPage /> },
       { path: 'templates', element: <TemplatesPage /> },
       { path: 'members', element: <MembersPage /> },
-      { path: 'settings/fields', element: <FieldSettingsPage /> },
-      { path: 'settings/pipeline', element: <PipelineSettingsPage /> },
-      { path: 'settings/custom-actions', element: <CustomActionsPage /> },
-      { path: 'settings/permissions', element: <PermissionsPage /> },
-      { path: 'settings/assignment', element: <AssignmentSettingsPage /> },
-      { path: 'settings/scheduled-reports', element: <ScheduledReportsPage /> },
-      { path: 'settings/integrations', element: <IntegrationsPage /> },
-      { path: 'settings/voice-extraction', element: <VoiceExtractionSettingsPage /> },
-      { path: 'settings/dashboards', element: <DashboardSettingsPage /> },
-      { path: 'status', element: <SystemStatusPage /> },
+      // The deployment status page moved under Settings with the rest of the
+      // operator surface. The old path still works so bookmarks and the
+      // existing test suite do not break on a redesign.
+      { path: 'status', element: <Navigate to="/settings/system" replace /> },
+      {
+        // One door. Everything that configures the workspace, plus the
+        // deployment's own internals, lives behind it.
+        path: 'settings',
+        element: <SettingsLayout />,
+        children: [
+          { index: true, element: <SettingsOverviewPage /> },
+          { path: 'fields', element: <FieldSettingsPage /> },
+          { path: 'pipeline', element: <PipelineSettingsPage /> },
+          { path: 'custom-actions', element: <CustomActionsPage /> },
+          { path: 'permissions', element: <PermissionsPage /> },
+          { path: 'assignment', element: <AssignmentSettingsPage /> },
+          { path: 'scheduled-reports', element: <ScheduledReportsPage /> },
+          { path: 'dashboards', element: <DashboardSettingsPage /> },
+          { path: 'integrations', element: <IntegrationsPage /> },
+          { path: 'voice-extraction', element: <VoiceExtractionSettingsPage /> },
+          { path: 'system', element: <SystemStatusPage /> },
+        ],
+      },
     ],
   },
 ])

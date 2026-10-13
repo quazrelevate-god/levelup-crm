@@ -52,7 +52,7 @@ test.describe('an empty workspace', () => {
   })
 
   test('starts with no business vocabulary at all', async () => {
-    await page.getByRole('link', { name: 'Fields', exact: true }).click()
+    await page.goto('/settings/fields')
 
     // The four built-ins and nothing else. If a fixture ever seeds a taxonomy
     // into a real workspace, this is where it shows up.
@@ -63,7 +63,7 @@ test.describe('an empty workspace', () => {
   })
 
   test('an admin invents a field, and it reaches the create form', async () => {
-    await page.getByRole('link', { name: 'Fields', exact: true }).click()
+    await page.goto('/settings/fields')
     await page.getByRole('button', { name: 'Add a new field' }).click()
 
     const dialog = page.getByRole('dialog')
@@ -79,7 +79,7 @@ test.describe('an empty workspace', () => {
   })
 
   test('and a stage in their own words', async () => {
-    await page.getByRole('link', { name: 'Pipeline', exact: true }).click()
+    await page.goto('/settings/pipeline')
     // Inline, not a dialog: the pipeline screen is three columns of editable
     // rows, which is why there is no "new stage" modal to open.
     await page.getByPlaceholder('New stage').fill('Awaiting callback')

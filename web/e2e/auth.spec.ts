@@ -12,7 +12,7 @@ test.describe('sign in', () => {
     await page.getByRole('button', { name: 'Sign in' }).click()
 
     await expect(page.getByRole('heading', { name: 'Leads' })).toBeVisible()
-    await expect(page.getByText('Acme Sales')).toBeVisible()
+    await expect(page.getByRole('complementary').getByText('Acme Sales')).toBeVisible()
   })
 
   test('shows the licence message rather than a generic failure', async ({ page }) => {
@@ -218,8 +218,14 @@ test.describe('workspace scoping', () => {
     await page.getByRole('button', { name: 'Sign in' }).click()
     await expect(page.getByRole('heading', { name: 'Leads' })).toBeVisible()
 
+    // The heading paints before any fetch resolves, so sampling the recorded
+    // requests right here raced the first one and failed about one run in
+    // three. Poll until the shell has actually asked for something.
+    await expect
+      .poll(() => stub.requests.filter((entry) => entry.includes('/workspaces/')).length)
+      .toBeGreaterThan(0)
+
     const tenantCalls = stub.requests.filter((entry) => entry.includes('/workspaces/'))
-    expect(tenantCalls.length).toBeGreaterThan(0)
     for (const call of tenantCalls) {
       expect(call).toContain(WORKSPACE_A)
       expect(call).not.toContain(WORKSPACE_B)

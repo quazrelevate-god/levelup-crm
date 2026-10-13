@@ -82,7 +82,7 @@ export function TasksPage() {
     <div className="space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold">Tasks</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Tasks</h1>
           <p className="text-muted-foreground text-sm">
             Follow-up work, in the workspace&rsquo;s own timezone.
           </p>

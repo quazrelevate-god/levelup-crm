@@ -2,12 +2,19 @@ import * as React from 'react'
 
 import { cn } from '@/lib/utils'
 
+/**
+ * The resting surface, and the one place neumorphism is used.
+ *
+ * A card does not respond to a pointer, so a soft dual shadow here cannot be
+ * mistaken for an affordance — which is the usual way neumorphism goes wrong.
+ */
 function Card({ className, ...props }: React.ComponentProps<'div'>) {
   return (
     <div
       data-slot="card"
       className={cn(
-        'bg-card text-card-foreground flex flex-col gap-6 rounded-xl border py-6 shadow-sm',
+        'bg-card text-card-foreground border-border/60 rounded-2xl border',
+        'shadow-neu-sm flex flex-col gap-6 py-6',
         className,
       )}
       {...props}
@@ -29,7 +36,7 @@ function CardTitle({ className, ...props }: React.ComponentProps<'div'>) {
   return (
     <div
       data-slot="card-title"
-      className={cn('leading-none font-semibold', className)}
+      className={cn('text-base leading-none font-semibold tracking-tight', className)}
       {...props}
     />
   )

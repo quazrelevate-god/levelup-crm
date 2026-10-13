@@ -162,12 +162,11 @@ export function VoiceExtractionSettingsPage() {
     <div className="mx-auto max-w-4xl space-y-6 p-6">
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">Voice extraction</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Voice extraction</h1>
           <p className="text-muted-foreground mt-1 text-sm">
-            Map a Bolna disposition name to a CRM lead field. After a completed
-            call, an extraction that clears its confidence threshold updates the
-            field. Below the threshold, the extracted value is recorded on the
-            lead&rsquo;s timeline but the field is left alone.
+            Map a Bolna disposition name to a CRM lead field. After a completed call, an extraction
+            that clears its confidence threshold updates the field. Below the threshold, the
+            extracted value is recorded on the lead&rsquo;s timeline but the field is left alone.
           </p>
         </div>
         <Button onClick={beginCreate}>Add mapping</Button>
@@ -188,8 +187,8 @@ export function VoiceExtractionSettingsPage() {
             <p className="text-muted-foreground text-sm">Loading&hellip;</p>
           ) : rows.length === 0 ? (
             <p className="text-muted-foreground text-sm">
-              No mappings yet. Every completed Bolna call will still be logged
-              and its summary recorded &mdash; only field write-back is off.
+              No mappings yet. Every completed Bolna call will still be logged and its summary
+              recorded &mdash; only field write-back is off.
             </p>
           ) : (
             <table className="w-full text-sm">
@@ -222,11 +221,7 @@ export function VoiceExtractionSettingsPage() {
                       <Button variant="ghost" size="sm" onClick={() => beginEdit(mapping)}>
                         Edit
                       </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => void del(mapping)}
-                      >
+                      <Button variant="ghost" size="sm" onClick={() => void del(mapping)}>
                         Delete
                       </Button>
                     </td>
@@ -252,10 +247,7 @@ export function VoiceExtractionSettingsPage() {
             <Button variant="ghost" onClick={() => setDialogOpen(false)}>
               Cancel
             </Button>
-            <Button
-              onClick={() => void submit()}
-              disabled={create.isPending || update.isPending}
-            >
+            <Button onClick={() => void submit()} disabled={create.isPending || update.isPending}>
               {editing ? 'Save' : 'Add mapping'}
             </Button>
           </>
@@ -263,15 +255,11 @@ export function VoiceExtractionSettingsPage() {
       >
         <div className="space-y-4">
           <div className="space-y-2">
-            <FieldLabel htmlFor="voice-mapping-disposition">
-              Bolna disposition name
-            </FieldLabel>
+            <FieldLabel htmlFor="voice-mapping-disposition">Bolna disposition name</FieldLabel>
             <Input
               id="voice-mapping-disposition"
               value={form.disposition_name}
-              onChange={(event) =>
-                setForm({ ...form, disposition_name: event.target.value })
-              }
+              onChange={(event) => setForm({ ...form, disposition_name: event.target.value })}
               placeholder="e.g. Customer Name"
             />
             <p className="text-muted-foreground text-xs">
@@ -284,9 +272,7 @@ export function VoiceExtractionSettingsPage() {
             <Select
               id="voice-mapping-field"
               value={form.target_field_key}
-              onChange={(event) =>
-                setForm({ ...form, target_field_key: event.target.value })
-              }
+              onChange={(event) => setForm({ ...form, target_field_key: event.target.value })}
             >
               <option value="">Pick a field&hellip;</option>
               {editableFields.map((field) => (
@@ -317,8 +303,8 @@ export function VoiceExtractionSettingsPage() {
               className="w-full"
             />
             <p className="text-muted-foreground text-xs">
-              Below this, the extracted value is not written &mdash; it appears
-              on the timeline only. 0.70 is the recommended default.
+              Below this, the extracted value is not written &mdash; it appears on the timeline
+              only. 0.70 is the recommended default.
             </p>
           </div>
 
@@ -327,9 +313,7 @@ export function VoiceExtractionSettingsPage() {
               id="voice-mapping-enabled"
               type="checkbox"
               checked={form.is_enabled}
-              onChange={(event) =>
-                setForm({ ...form, is_enabled: event.target.checked })
-              }
+              onChange={(event) => setForm({ ...form, is_enabled: event.target.checked })}
             />
             <FieldLabel htmlFor="voice-mapping-enabled">Enabled</FieldLabel>
           </div>

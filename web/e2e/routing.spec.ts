@@ -30,7 +30,7 @@ async function signIn(page: Page, options = {}) {
 test.describe('assignment rules', () => {
   test('rules are listed in priority order, numbered', async ({ page }) => {
     await signIn(page)
-    await page.getByRole('link', { name: 'Assignment' }).click()
+    await page.goto('/settings/assignment')
 
     await expect(page.getByRole('heading', { name: 'Assignment' })).toBeVisible()
     const rules = page.getByTestId('assignment-rule')
@@ -43,7 +43,7 @@ test.describe('assignment rules', () => {
 
   test('moving a rule sends the whole new order', async ({ page }) => {
     const stub = await signIn(page)
-    await page.getByRole('link', { name: 'Assignment' }).click()
+    await page.goto('/settings/assignment')
 
     await page.getByRole('button', { name: 'Move Everyone else up' }).click()
 
@@ -55,7 +55,7 @@ test.describe('assignment rules', () => {
 
   test('a new round-robin rule sends the members it was given', async ({ page }) => {
     const stub = await signIn(page)
-    await page.getByRole('link', { name: 'Assignment' }).click()
+    await page.goto('/settings/assignment')
     await page.getByRole('button', { name: 'New rule' }).click()
 
     await page.getByLabel('Name').fill('Weekend cover')
@@ -75,7 +75,7 @@ test.describe('assignment rules', () => {
 
   test('the strategy picker explains what each one does', async ({ page }) => {
     await signIn(page)
-    await page.getByRole('link', { name: 'Assignment' }).click()
+    await page.goto('/settings/assignment')
     await page.getByRole('button', { name: 'New rule' }).click()
 
     await page.getByLabel('Strategy').selectOption('UNASSIGNED')
@@ -86,7 +86,7 @@ test.describe('assignment rules', () => {
 
   test('the create dialog says unlicensed members are always skipped', async ({ page }) => {
     await signIn(page)
-    await page.getByRole('link', { name: 'Assignment' }).click()
+    await page.goto('/settings/assignment')
     await page.getByRole('button', { name: 'New rule' }).click()
 
     await expect(page.getByText(/cannot log in to work the lead/)).toBeVisible()
@@ -94,7 +94,7 @@ test.describe('assignment rules', () => {
 
   test('a refused request is not an empty rule list', async ({ page }) => {
     await signIn(page, { rulesAllowed: false })
-    await page.getByRole('link', { name: 'Assignment' }).click()
+    await page.goto('/settings/assignment')
 
     // "No rules yet" after a 403 tells the operator their leads arrive
     // unassigned by design, which is the opposite of what happened.
@@ -104,7 +104,7 @@ test.describe('assignment rules', () => {
 
   test('deactivating keeps the rule visible', async ({ page }) => {
     await signIn(page)
-    await page.getByRole('link', { name: 'Assignment' }).click()
+    await page.goto('/settings/assignment')
 
     await page
       .getByTestId('assignment-rule')
@@ -151,7 +151,7 @@ test.describe('distribution', () => {
 test.describe('scheduled reports', () => {
   test('the workspace timezone is stated, not the browser one', async ({ page }) => {
     await signIn(page)
-    await page.getByRole('link', { name: 'Schedules' }).click()
+    await page.goto('/settings/scheduled-reports')
 
     await expect(page.getByRole('heading', { name: 'Scheduled reports' })).toBeVisible()
     // A manager in another zone would otherwise read 09:00 as their own.
@@ -160,7 +160,7 @@ test.describe('scheduled reports', () => {
 
   test('a schedule lists its cadence in words', async ({ page }) => {
     await signIn(page)
-    await page.getByRole('link', { name: 'Schedules' }).click()
+    await page.goto('/settings/scheduled-reports')
 
     const rows = page.getByTestId('scheduled-report')
     await expect(rows).toHaveCount(1)
@@ -186,7 +186,7 @@ test.describe('scheduled reports', () => {
         },
       ],
     })
-    await page.getByRole('link', { name: 'Schedules' }).click()
+    await page.goto('/settings/scheduled-reports')
 
     // Otherwise it fails every morning and nobody finds out until somebody
     // asks where the report went.
@@ -196,7 +196,7 @@ test.describe('scheduled reports', () => {
 
   test('creating a schedule sends the parsed recipient list', async ({ page }) => {
     await signIn(page)
-    await page.getByRole('link', { name: 'Schedules' }).click()
+    await page.goto('/settings/scheduled-reports')
     await page.getByRole('button', { name: 'Schedule a report' }).click()
 
     await page.getByLabel('Name').fill('Daily pipeline')
@@ -210,7 +210,7 @@ test.describe('scheduled reports', () => {
 
   test('the dialog says whose permissions the report renders with', async ({ page }) => {
     await signIn(page)
-    await page.getByRole('link', { name: 'Schedules' }).click()
+    await page.goto('/settings/scheduled-reports')
     await page.getByRole('button', { name: 'Schedule a report' }).click()
 
     await expect(page.getByText(/your field permissions, not the recipients/)).toBeVisible()
