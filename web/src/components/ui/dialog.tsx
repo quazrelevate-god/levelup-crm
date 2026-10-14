@@ -57,9 +57,13 @@ function Dialog({ open, onClose, title, description, children, footer, className
         onClose()
       }}
       className={cn(
-        'glass text-foreground shadow-e3 w-full max-w-lg rounded-2xl border p-0',
+        'bg-card text-foreground shadow-e3 w-full max-w-lg rounded-2xl border p-0',
+        // A modal <dialog> is centred by the user agent's own `margin: auto`,
+        // which Tailwind's preflight resets to 0 — so without this every dialog
+        // pins itself to the top-left corner of the viewport.
+        'm-auto max-h-[85vh] overflow-y-auto',
         // The backdrop blurs the page behind rather than only dimming it, which
-        // is what makes a translucent panel legible instead of busy.
+        // is what makes the dialog read as above everything else.
         'open:animate-in backdrop:bg-black/35 backdrop:backdrop-blur-sm',
         className,
       )}

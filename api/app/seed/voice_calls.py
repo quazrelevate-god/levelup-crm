@@ -193,10 +193,22 @@ class VoiceSeedResult:
 class DemoVoiceCallSeeder:
     """Attaches a handful of fictional AI calls to the demo workspace's leads."""
 
-    def __init__(self, session: AsyncSession, *, count: int = 12, seed: int = 42) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        count: int = 12,
+        seed: int = 42,
+        expect_workspace: str | None = None,
+    ) -> None:
         self._session = session
         self._count = count
         self._random = random.Random(seed)
+        #: The caller must name the workspace they believe they are writing to.
+        #: Outside a local database this is the real guard — "wrong deployment"
+        #: is the mistake that actually happens, and an environment check only
+        #: approximates it.
+        self._expect_workspace = expect_workspace
 
     async def run(self) -> VoiceSeedResult:
         workspace = await self._demo_workspace()
@@ -221,11 +233,19 @@ class DemoVoiceCallSeeder:
         workspaces = list(rows.scalars())
         if not workspaces:
             raise RuntimeError("no workspace exists; run `python -m app.seed` first")
+        if self._expect_workspace is not None:
+            match = [w for w in workspaces if w.name == self._expect_workspace]
+            if not match:
+                names = ", ".join(repr(w.name) for w in workspaces)
+                raise RuntimeError(
+                    f"no workspace named {self._expect_workspace!r} here; this database has {names}"
+                )
+            return match[0]
         if len(workspaces) > 1:
             names = ", ".join(repr(w.name) for w in workspaces)
             raise RuntimeError(
                 f"refusing to guess: this deployment has more than one workspace ({names}). "
-                "This seeder only ever targets a single-workspace demo database."
+                "Name the one you mean with --workspace-name."
             )
         return workspaces[0]
 
@@ -368,25 +388,49 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--count", type=int, default=12, help="How many calls to write")
     parser.add_argument("--seed", type=int, default=42, help="RNG seed; fixed so runs match")
+    parser.add_argument(
+        "--workspace-name",
+        help="The workspace to write into, named exactly. Required outside a local database.",
+    )
+    parser.add_argument(
+        "--allow-non-local",
+        action="store_true",
+        help="Run against a non-local deployment. Requires --workspace-name.",
+    )
     return parser.parse_args(argv)
 
 
-async def _run(count: int, seed: int) -> int:
+async def _run(count: int, seed: int, workspace_name: str | None, allow_non_local: bool) -> int:
     settings = Settings()
     if not settings.is_local:
-        # The same guard the lead seeder carries, for the same reason: a demo
-        # taxonomy in a customer's database is not recoverable by deleting rows.
+        # The lead seeder refuses outright here, because inventing a taxonomy in
+        # somebody's database is not recoverable by deleting rows. This seeder
+        # only ever *adds call rows to leads that already exist*, so it can be
+        # allowed out — but only deliberately, and only at a named workspace, so
+        # it cannot land on the wrong deployment by accident.
+        if not allow_non_local:
+            print(
+                f"refusing to seed: ENVIRONMENT is {settings.environment!r}, not 'local'. "
+                "Pass --allow-non-local --workspace-name '<name>' if you mean it.",
+                file=sys.stderr,
+            )
+            return 2
+        if not workspace_name:
+            print("--allow-non-local requires --workspace-name", file=sys.stderr)
+            return 2
         print(
-            f"refusing to seed: ENVIRONMENT is {settings.environment!r}, not 'local'.",
+            f"WARNING: seeding demo AI calls into a {settings.environment!r} deployment, "
+            f"workspace {workspace_name!r}.",
             file=sys.stderr,
         )
-        return 2
 
     engine = create_engine(settings)
     factory = create_session_factory(engine)
     try:
         async with factory() as session:
-            result = await DemoVoiceCallSeeder(session, count=count, seed=seed).run()
+            result = await DemoVoiceCallSeeder(
+                session, count=count, seed=seed, expect_workspace=workspace_name
+            ).run()
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -400,7 +444,7 @@ async def _run(count: int, seed: int) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
-    return asyncio.run(_run(args.count, args.seed))
+    return asyncio.run(_run(args.count, args.seed, args.workspace_name, args.allow_non_local))
 
 
 if __name__ == "__main__":

@@ -55,13 +55,6 @@
   --radius-xl: calc(var(--radius) + 4px);
   --radius-2xl: calc(var(--radius) + 10px);
 
-  --shadow-e1: var(--elevation-1);
-  --shadow-e2: var(--elevation-2);
-  --shadow-e3: var(--elevation-3);
-  --shadow-neu: var(--neu-raised);
-  --shadow-neu-sm: var(--neu-raised-sm);
-  --shadow-neu-inset: var(--neu-inset);
-
   --font-sans:
     'Inter var', 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
 
@@ -165,6 +158,33 @@
   --neu-raised: 6px 6px 16px oklch(0 0 0 / 45%), -6px -6px 14px oklch(1 0 0 / 4.5%);
   --neu-raised-sm: 3px 3px 8px oklch(0 0 0 / 40%), -3px -3px 7px oklch(1 0 0 / 4%);
   --neu-inset: inset 2px 2px 5px oklch(0 0 0 / 45%), inset -2px -2px 5px oklch(1 0 0 / 4%);
+}
+
+/*
+ * Shadows as `@utility`, not `--shadow-*` theme entries.
+ *
+ * The theme-namespace form generated no rule at all here, so every `shadow-e*`
+ * and `shadow-neu*` class in the app silently did nothing — the elevation
+ * system was written and never applied. `@utility` produces a real utility,
+ * which is also what makes `hover:shadow-e2` possible.
+ */
+@utility shadow-e1 {
+  box-shadow: var(--elevation-1);
+}
+@utility shadow-e2 {
+  box-shadow: var(--elevation-2);
+}
+@utility shadow-e3 {
+  box-shadow: var(--elevation-3);
+}
+@utility shadow-neu {
+  box-shadow: var(--neu-raised);
+}
+@utility shadow-neu-sm {
+  box-shadow: var(--neu-raised-sm);
+}
+@utility shadow-neu-inset {
+  box-shadow: var(--neu-inset);
 }
 
 @layer base {

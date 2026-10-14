@@ -12,7 +12,7 @@ test.describe('sign in', () => {
     await page.getByRole('button', { name: 'Sign in' }).click()
 
     await expect(page.getByRole('heading', { name: 'Leads' })).toBeVisible()
-    await expect(page.getByRole('complementary').getByText('Acme Sales')).toBeVisible()
+    await expect(page.getByRole('banner').getByText('Acme Sales')).toBeVisible()
   })
 
   test('shows the licence message rather than a generic failure', async ({ page }) => {
