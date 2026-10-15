@@ -355,7 +355,7 @@ const AWAITING: StubOptions = {
 
 /** Start an AI call from the open lead panel, so the panel begins polling. */
 async function startAiCall(page: Page) {
-  await page.getByRole('button', { name: '🤖 AI Call' }).click()
+  await page.getByRole('button', { name: 'AI Call', exact: true }).click()
   await expect(page.getByText(/AI call started/)).toBeVisible()
 }
 
