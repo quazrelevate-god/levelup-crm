@@ -11,7 +11,7 @@
  * with the server.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { ApiError } from '@/api/client'
 import type {
@@ -19,6 +19,7 @@ import type {
   CustomActionType,
   FieldTypeSpec,
   Lead,
+  LeadAction,
   LeadField,
   LostReason,
   MemberDetail,
@@ -57,6 +58,25 @@ import { LeadTasks } from '@/features/work/LeadTasks'
 const AI_CALL_POLL_MS = 5_000
 /** Longest a call plus Bolna's post-processing plausibly takes. */
 const AI_CALL_POLL_LIMIT_MS = 15 * 60 * 1_000
+
+/**
+ * True when a logged AI call is still carrying the placeholder summary and
+ * Bolna's real one could still arrive.
+ *
+ * `FALLBACK` is recorded when the hangup webhook lands without a summary; the
+ * `completed` webhook upgrades the same action in place moments later. A call
+ * that genuinely has no summary — it never connected — keeps the placeholder
+ * for ever, so the age bound is what stops this polling on that call until the
+ * panel is closed.
+ */
+function awaitingSummaryUpgrade(items: readonly LeadAction[] | undefined): boolean {
+  return (items ?? []).some(
+    (action) =>
+      action.kind === 'CALL_LOGGED' &&
+      action.payload.summary_source === 'FALLBACK' &&
+      Date.now() - Date.parse(action.performed_at) < AI_CALL_POLL_LIMIT_MS,
+  )
+}
 
 interface LeadDetailProps {
   readonly workspaceId: string
@@ -126,8 +146,24 @@ export function LeadDetail({
     readonly startedAt: number
   } | null>(null)
 
+  // Poll while *either* this panel started a call it has not seen logged, or
+  // the data itself shows a call still waiting for its summary.
+  //
+  // The second condition is the one that matters after a reload. Bolna sends
+  // the hangup first and the summary seconds later; `awaitingExecution` is
+  // component state, so a reload in that window cleared it, polling stopped,
+  // and the upgrade arrived with nothing watching. Production, 2026-10-15: the
+  // page was reloaded at 14:23:09, the last poll ran at 14:23:12, and the AI
+  // summary landed at 14:23:18 — six seconds late, and invisible until the
+  // next manual refresh.
+  //
+  // Reading it off the fetched timeline needs no state to survive, so a
+  // reload, a tab restore or a second browser all resume polling on their own.
   const timeline = useLeadTimeline(workspaceId, lead.id, {
-    refetchInterval: awaitingExecution ? AI_CALL_POLL_MS : false,
+    refetchInterval: (query) =>
+      awaitingExecution || awaitingSummaryUpgrade(query.state.data?.items)
+        ? AI_CALL_POLL_MS
+        : false,
   })
   const refreshLeadData = useRefreshLeadData(workspaceId)
   const actionFieldTypes = useActionFieldTypes(workspaceId)
@@ -149,23 +185,50 @@ export function LeadDetail({
     setAwaitingExecution(null)
   }, [lead.id])
 
-  // Stop polling once this call's AI Call log is on the timeline, or give up
-  // after a bound — a call Bolna never reports must not poll forever.
+  // Stop polling once this call's AI Call log carries a real summary, or give
+  // up after a bound — a call Bolna never reports must not poll forever.
+  //
+  // Presence of the log is not the finish line. Bolna delivers the hangup first
+  // (transcript, no summary) and the completed result seconds later; the second
+  // delivery upgrades the same row and the same action in place. Stopping on
+  // presence meant the panel settled on the recorded fallback and only showed
+  // the real summary after a page reload.
   useEffect(() => {
     if (!awaitingExecution) return
-    const landed = (timeline.data?.items ?? []).some(
+    const landed = (timeline.data?.items ?? []).find(
       (action) =>
         action.kind === 'CALL_LOGGED' && action.payload.execution_id === awaitingExecution.id,
     )
-    if (landed) {
+    const stillFallback = landed?.payload.summary_source === 'FALLBACK'
+    const timedOut = Date.now() - awaitingExecution.startedAt > AI_CALL_POLL_LIMIT_MS
+
+    if (landed && !stillFallback) {
       setAwaitingExecution(null)
       setVoiceNotice('AI call finished · summary added to the timeline')
       void refreshLeadData()
-    } else if (Date.now() - awaitingExecution.startedAt > AI_CALL_POLL_LIMIT_MS) {
+    } else if (timedOut) {
       setAwaitingExecution(null)
-      setVoiceNotice('AI call started · the result will appear here once Bolna reports it')
+      setVoiceNotice(
+        landed
+          ? 'AI call logged · no automatic summary was available'
+          : 'AI call started · the result will appear here once Bolna reports it',
+      )
+      // The fallback summary is still worth showing, so refresh what did land.
+      if (landed) void refreshLeadData()
     }
   }, [awaitingExecution, timeline.data, timeline.dataUpdatedAt, refreshLeadData])
+
+  // The effect above refreshes the lead's own fields when *this* panel was
+  // waiting on the call. After a reload nothing is waiting, so the upgrade
+  // would land in the timeline while the field grid still showed the values
+  // from before Bolna's extraction. Watching the derived flag fall covers that
+  // case too, and fires once rather than on every poll.
+  const pendingSummary = awaitingSummaryUpgrade(timeline.data?.items)
+  const wasPendingSummary = useRef(pendingSummary)
+  useEffect(() => {
+    if (wasPendingSummary.current && !pendingSummary) void refreshLeadData()
+    wasPendingSummary.current = pendingSummary
+  }, [pendingSummary, refreshLeadData])
 
   const rendererFor = (field: LeadField) =>
     fieldTypes.find((spec) => spec.key === field.field_type)?.renderer

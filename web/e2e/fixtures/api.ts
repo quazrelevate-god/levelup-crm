@@ -773,6 +773,14 @@ export interface StubOptions {
   readonly voiceCallDetails?: Record<string, Record<string, unknown>>
   /** When false, both voice-call reads answer 403 insufficient_permissions. */
   readonly callHistoryAllowed?: boolean
+  /**
+   * The lead timeline `GET /leads/{id}/actions` returns. Defaults to `TIMELINE`.
+   *
+   * A spec supplies its own when it needs a `CALL_LOGGED` action in a known
+   * state — the AI-summary poll stops on `payload.summary_source`, not on the
+   * action's mere presence.
+   */
+  readonly timeline?: Record<string, unknown>[]
 }
 
 export interface StubHandle {
@@ -814,6 +822,13 @@ export interface StubHandle {
   readonly retried: () => string[]
   /** The body of the last dashboard create. */
   readonly lastDashboard: () => Record<string, unknown> | null
+  /**
+   * Models Bolna's *second* delivery: the completed result that upgrades a
+   * call already logged from the hangup. Flips every `CALL_LOGGED` action and
+   * every listed call from the recorded fallback to the vendor's own summary,
+   * in place — which is what the backend's upgrade path does to the same row.
+   */
+  readonly completeAiCall: (summary: string) => void
   /** The `field_key` the page last asked `/reports/breakdown` to group by. */
   readonly lastBreakdown: () => string | null
   /** The body of the last `POST /auth/password-reset/request`. */
@@ -1028,6 +1043,8 @@ export async function stubApi(page: Page, options: StubOptions = {}): Promise<St
   let currentMembers = [...members]
   let currentFields = [...(options.fields ?? BUILTIN_FIELDS)]
   let currentLeads = [...(options.leads ?? [lead()])]
+  let currentTimeline = [...(options.timeline ?? TIMELINE)]
+  let currentVoiceCalls = [...(options.voiceCalls ?? [])]
   let savedFilters: Record<string, unknown>[] = []
   let currentLayout: Record<string, unknown> | null = null
   //: The last search body the page sent, so a spec can assert the *shape* of
@@ -2011,7 +2028,7 @@ export async function stubApi(page: Page, options: StubOptions = {}): Promise<St
       if (options.callHistoryAllowed === false) {
         return apiError(route, 403, 'insufficient_permissions')
       }
-      const all = options.voiceCalls ?? []
+      const all = currentVoiceCalls
       const wantedLead = url.searchParams.get('lead_id')
       const completedOnly = url.searchParams.get('completed_only') === 'true'
       const limit = Number(url.searchParams.get('limit') ?? 20)
@@ -2032,7 +2049,31 @@ export async function stubApi(page: Page, options: StubOptions = {}): Promise<St
 
     const actionsMatch = /\/leads\/([^/]+)\/actions$/.exec(path)
     if (actionsMatch) {
-      return json(route, 200, { items: TIMELINE, total: TIMELINE.length, limit: 100, offset: 0 })
+      return json(route, 200, {
+        items: currentTimeline,
+        total: currentTimeline.length,
+        limit: 100,
+        offset: 0,
+      })
+    }
+
+    if (path.endsWith('/voice/calls') && method === 'POST') {
+      const body = route.request().postDataJSON() as { lead_id?: string }
+      return json(route, 200, {
+        call_id: 'call-triggered',
+        lead_id: body.lead_id ?? 'lead-1',
+        execution_id: 'exec-pending',
+        status: 'DISPATCHED',
+        bolna_status: 'queued',
+        agent_id: 'agent-1',
+        recipient_phone: '+919087822357',
+        user_data: { name: 'Ada Lead', crm_lead_id: body.lead_id ?? 'lead-1' },
+        previous_call_summary: null,
+        call_count: 0,
+        // A 2xx is not success: the panel reads `error` before claiming the
+        // call started, so the stub has to carry it explicitly.
+        error: null,
+      })
     }
 
     const noteMatch = /\/leads\/([^/]+)\/notes$/.exec(path)
@@ -2122,6 +2163,22 @@ export async function stubApi(page: Page, options: StubOptions = {}): Promise<St
     lastApiKey: () => lastApiKeyBody,
     retried: () => retriedIds,
     lastDashboard: () => lastDashboardBody,
+    completeAiCall: (summary: string) => {
+      currentTimeline = currentTimeline.map((entry) =>
+        entry.kind === 'CALL_LOGGED'
+          ? {
+              ...entry,
+              body: summary,
+              payload: { ...(entry.payload as Record<string, unknown>), summary_source: 'AI' },
+            }
+          : entry,
+      )
+      currentVoiceCalls = currentVoiceCalls.map((entry) => ({
+        ...entry,
+        summary,
+        summary_source: 'AI',
+      }))
+    },
     lastBreakdown: () => lastBreakdownField,
     lastResetRequest: () => lastResetRequest,
     lastSetPassword: () => lastSetPassword,

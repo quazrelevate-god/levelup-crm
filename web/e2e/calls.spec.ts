@@ -1,6 +1,16 @@
 import { expect, test, type Page } from '@playwright/test'
 
-import { callLeadRef, stubApi, voiceCall, voiceCallDetail, type StubOptions } from './fixtures/api'
+import {
+  action,
+  callLeadRef,
+  stubApi,
+  TIMELINE,
+  voiceCall,
+  voiceCallDetail,
+  WORKSPACE_A,
+  WORKSPACE_B,
+  type StubOptions,
+} from './fixtures/api'
 
 /**
  * The AI Call Summary card and the Call Details module (docs/13).
@@ -287,5 +297,208 @@ test.describe('the call page', () => {
     await page.goto('/calls')
 
     await expect(page.getByText(/permission template may not allow/)).toBeVisible()
+  })
+})
+
+// --- the summary arriving without a page reload --------------------------------
+//
+// Bolna delivers twice: the hangup first (transcript, no summary) and the
+// completed result seconds later, which upgrades the same row and the same
+// timeline action in place. The panel used to settle on the recorded fallback
+// and only show the real summary after a manual refresh. These pin both halves
+// of the fix — the card's query is invalidated, and the poll waits for a
+// summary rather than for the log's mere presence.
+
+/** Mirrors LeadDetail's own interval; the panel does not export it. */
+const POLL_MS = 5_000
+
+const FALLBACK_SUMMARY = 'AI call ended without a conversation'
+const UPGRADED_SUMMARY = 'Ada asked about the schedule and the fee.'
+
+/** The hangup delivery: logged, transcript only, no vendor summary yet.
+ *
+ * `performed_at` is *now*, not the suite's fixed date, because this action
+ * represents a call that has only just hung up — which is the whole premise of
+ * these tests. The panel decides whether a summary could still be coming from
+ * how old the log is, so a fixture dated weeks back would describe a call
+ * nobody is waiting on and the polling tests would be testing nothing.
+ */
+const FALLBACK_TIMELINE = [
+  action({
+    id: 'action-ai-call',
+    kind: 'CALL_LOGGED',
+    body: FALLBACK_SUMMARY,
+    performed_at: new Date().toISOString(),
+    payload: {
+      execution_id: 'exec-pending',
+      source: 'AI_CALL',
+      summary_source: 'FALLBACK',
+      has_transcript: true,
+    },
+  }),
+  ...TIMELINE,
+]
+
+const PENDING_CALL = voiceCall({
+  id: 'call-triggered',
+  execution_id: 'exec-pending',
+  summary: FALLBACK_SUMMARY,
+  summary_source: 'FALLBACK',
+  completed_at: '2026-09-26T10:00:00Z',
+})
+
+const AWAITING: StubOptions = {
+  voiceCalls: [PENDING_CALL],
+  voiceCallDetails: { 'call-triggered': voiceCallDetail({ id: 'call-triggered' }) },
+  timeline: FALLBACK_TIMELINE,
+}
+
+/** Start an AI call from the open lead panel, so the panel begins polling. */
+async function startAiCall(page: Page) {
+  await page.getByRole('button', { name: '🤖 AI Call' }).click()
+  await expect(page.getByText(/AI call started/)).toBeVisible()
+}
+
+test.describe('the AI summary appears without a manual refresh', () => {
+  test('the upgraded summary replaces the fallback in the same mounted panel', async ({ page }) => {
+    const stub = await signIn(page, AWAITING)
+    await openLead(page)
+
+    // The fallback is what the hangup delivery left behind.
+    await expect(page.getByTestId('ai-call-summary-text')).toHaveText(FALLBACK_SUMMARY)
+    await startAiCall(page)
+
+    // Bolna's completed delivery lands. Nothing remounts and nothing is
+    // reloaded — the card must pick this up on its own.
+    stub.completeAiCall(UPGRADED_SUMMARY)
+
+    await expect(page.getByTestId('ai-call-summary-text')).toHaveText(UPGRADED_SUMMARY, {
+      timeout: 20_000,
+    })
+    await expect(page.getByTestId('lead-detail')).toBeVisible()
+    await expect(page.getByText('AI call finished · summary added to the timeline')).toBeVisible()
+  })
+
+  test('the card re-reads its own list query, not just the timeline', async ({ page }) => {
+    const stub = await signIn(page, AWAITING)
+    await openLead(page)
+    await startAiCall(page)
+
+    // Recorded as "METHOD /path", so a GET of the list is distinguishable
+    // from the POST that started the call.
+    const callReads = () =>
+      stub.requests.filter((entry) => entry.startsWith('GET ') && entry.endsWith('/voice/calls'))
+        .length
+    const before = callReads()
+    stub.completeAiCall(UPGRADED_SUMMARY)
+    await expect(page.getByTestId('ai-call-summary-text')).toHaveText(UPGRADED_SUMMARY, {
+      timeout: 20_000,
+    })
+
+    // Invalidating the calls key is the whole fix: without it the card keeps
+    // its first answer and this count never moves.
+    expect(callReads()).toBeGreaterThan(before)
+  })
+
+  test('polling continues while the summary is still the fallback', async ({ page }) => {
+    const stub = await signIn(page, AWAITING)
+    await openLead(page)
+    await startAiCall(page)
+
+    // The log is already on the timeline, so presence alone would have stopped
+    // the poll here. It must keep going: the timeline is read more than once.
+    const timelineReads = () => stub.requests.filter((path) => path.includes('/actions')).length
+    const first = timelineReads()
+    await expect.poll(timelineReads, { timeout: 20_000 }).toBeGreaterThan(first)
+
+    // And the panel has not declared the call finished.
+    await expect(page.getByText('AI call finished · summary added to the timeline')).toHaveCount(0)
+  })
+
+  test('a panel that never started the call still picks the summary up', async ({ page }) => {
+    // The reload case, and the one that bit in production on 2026-10-15. The
+    // page was reloaded while Bolna was still summarising: `awaitingExecution`
+    // is component state, so it came back null, polling never restarted, and
+    // the upgrade arrived six seconds after the last read — invisible until
+    // someone refreshed by hand.
+    //
+    // So no `startAiCall` here. The panel is mounted cold onto a lead whose
+    // call is already logged with the fallback, exactly as it is after a
+    // reload, and it must resume polling from the data alone.
+    const stub = await signIn(page, AWAITING)
+    await openLead(page)
+    await expect(page.getByTestId('ai-call-summary-text')).toHaveText(FALLBACK_SUMMARY)
+
+    stub.completeAiCall(UPGRADED_SUMMARY)
+
+    await expect(page.getByTestId('ai-call-summary-text')).toHaveText(UPGRADED_SUMMARY, {
+      timeout: 20_000,
+    })
+  })
+
+  test('a cold panel stops polling once the summary has landed', async ({ page }) => {
+    const stub = await signIn(page, AWAITING)
+    await openLead(page)
+    stub.completeAiCall(UPGRADED_SUMMARY)
+    await expect(page.getByTestId('ai-call-summary-text')).toHaveText(UPGRADED_SUMMARY, {
+      timeout: 20_000,
+    })
+
+    // Derived polling must settle on its own, or a reloaded tab would read the
+    // timeline every five seconds for as long as it stayed open.
+    const settled = stub.requests.filter((path) => path.includes('/actions')).length
+    await page.waitForTimeout(POLL_MS * 2)
+    expect(stub.requests.filter((path) => path.includes('/actions')).length).toBe(settled)
+  })
+
+  test('polling stops once the summary is no longer the fallback', async ({ page }) => {
+    const stub = await signIn(page, AWAITING)
+    await openLead(page)
+    await startAiCall(page)
+    stub.completeAiCall(UPGRADED_SUMMARY)
+    await expect(page.getByText('AI call finished · summary added to the timeline')).toBeVisible({
+      timeout: 20_000,
+    })
+
+    // Settled: the timeline stops being re-read.
+    const settled = stub.requests.filter((path) => path.includes('/actions')).length
+    await page.waitForTimeout(POLL_MS * 2)
+    expect(stub.requests.filter((path) => path.includes('/actions')).length).toBe(settled)
+  })
+
+  test('a lead whose call never completes falls back to the bounded notice', async ({ page }) => {
+    // The 15-minute bound is not wall-clock-testable in an e2e run; what is
+    // testable is that nothing claims success while the summary is a fallback,
+    // and that the panel keeps working rather than spinning on an error.
+    const stub = await signIn(page, AWAITING)
+    await openLead(page)
+    await startAiCall(page)
+
+    await page.waitForTimeout(POLL_MS * 2)
+    await expect(page.getByText('AI call finished · summary added to the timeline')).toHaveCount(0)
+    await expect(page.getByTestId('ai-call-summary-text')).toHaveText(FALLBACK_SUMMARY)
+    await expect(page.getByTestId('lead-detail')).toBeVisible()
+    expect(stub.requests.filter((path) => path.includes('/actions')).length).toBeGreaterThan(1)
+  })
+
+  test("one workspace's refresh never reads another workspace's calls", async ({ page }) => {
+    const stub = await signIn(page, AWAITING)
+    await openLead(page)
+    await startAiCall(page)
+    stub.completeAiCall(UPGRADED_SUMMARY)
+    await expect(page.getByTestId('ai-call-summary-text')).toHaveText(UPGRADED_SUMMARY, {
+      timeout: 20_000,
+    })
+
+    // Every call read this session is scoped to the signed-in workspace. The
+    // other workspace is never touched, and the card's own query carries this
+    // lead's id — which the stub enforces by filtering on it server-side, so a
+    // leak would have shown another lead's summary in the assertion above.
+    const reads = stub.requests.filter((entry) => entry.includes('/voice/calls'))
+    expect(reads.length).toBeGreaterThan(0)
+    for (const entry of reads) {
+      expect(entry).toContain(`/workspaces/${WORKSPACE_A}/`)
+      expect(entry).not.toContain(WORKSPACE_B)
+    }
   })
 })
