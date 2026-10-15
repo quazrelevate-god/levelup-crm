@@ -828,6 +828,12 @@ export interface StubHandle {
    * every listed call from the recorded fallback to the vendor's own summary,
    * in place — which is what the backend's upgrade path does to the same row.
    */
+  /**
+   * Models the post-call sequence for a call that was still running: the
+   * record gains a completed_at and the vendor summary, and the timeline gains
+   * the CALL_LOGGED action that did not exist until the hangup.
+   */
+  readonly finishAiCall: (summary: string) => void
   readonly completeAiCall: (summary: string) => void
   /** The `field_key` the page last asked `/reports/breakdown` to group by. */
   readonly lastBreakdown: () => string | null
@@ -2163,6 +2169,37 @@ export async function stubApi(page: Page, options: StubOptions = {}): Promise<St
     lastApiKey: () => lastApiKeyBody,
     retried: () => retriedIds,
     lastDashboard: () => lastDashboardBody,
+    finishAiCall: (summary: string) => {
+      // Models the whole post-call sequence for a call that was still running:
+      // the record gains a `completed_at` and the vendor summary, and the
+      // timeline gains the `CALL_LOGGED` action that did not exist until the
+      // hangup. Distinct from `completeAiCall`, which upgrades an action that
+      // is already there.
+      currentVoiceCalls = currentVoiceCalls.map((entry) => ({
+        ...entry,
+        status: 'COMPLETED',
+        bolna_status: 'completed',
+        duration_seconds: 139,
+        summary,
+        summary_source: 'AI',
+        completed_at: new Date().toISOString(),
+      }))
+      currentTimeline = [
+        action({
+          id: 'action-ai-call-landed',
+          kind: 'CALL_LOGGED',
+          body: summary,
+          performed_at: new Date().toISOString(),
+          payload: {
+            execution_id: 'exec-in-flight',
+            source: 'AI_CALL',
+            summary_source: 'AI',
+            has_transcript: true,
+          },
+        }),
+        ...currentTimeline,
+      ]
+    },
     completeAiCall: (summary: string) => {
       currentTimeline = currentTimeline.map((entry) =>
         entry.kind === 'CALL_LOGGED'

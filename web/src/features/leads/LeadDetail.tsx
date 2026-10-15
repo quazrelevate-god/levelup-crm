@@ -35,6 +35,8 @@ import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { AiCallSummaryCard } from '@/features/calls/AiCallSummaryCard'
+import type { VoiceCallSummary } from '@/features/calls/api'
+import { useVoiceCalls } from '@/features/calls/api'
 import { useActionFieldTypes } from '@/features/fields/api'
 import { FieldInput } from '@/features/fields/FieldInput'
 import { inputTypeForWidget } from '@/features/fields/renderers'
@@ -77,6 +79,32 @@ function awaitingSummaryUpgrade(items: readonly LeadAction[] | undefined): boole
       action.payload.summary_source === 'FALLBACK' &&
       Date.now() - Date.parse(action.performed_at) < AI_CALL_POLL_LIMIT_MS,
   )
+}
+
+/**
+ * True when this lead's newest call still has something to tell us.
+ *
+ * Watching the timeline for a fallback summary was not enough. Nothing is
+ * written to the timeline until the call hangs up, so a page reloaded *during*
+ * a call saw no `CALL_LOGGED` action, found nothing to wait for, and never
+ * polled — the summary then landed with nothing watching, and only a second
+ * manual refresh revealed it. Production, 2026-10-15: the call ran from
+ * 14:20:20 to 14:22:39 and the action did not exist until 14:23:12, so most of
+ * that window was unwatched.
+ *
+ * The call record itself covers the whole span, from dispatch to summary:
+ *
+ *   no `completed_at`          still running, so keep reading
+ *   `summary_source` FALLBACK  finished, Bolna's summary may still upgrade it
+ *   otherwise                  settled, stop
+ */
+function callNeedsWatching(call: VoiceCallSummary | undefined): boolean {
+  if (!call) return false
+  // A call nobody could still be waiting on must not poll for as long as the
+  // panel stays open — a call that never connected keeps FALLBACK for ever.
+  if (Date.now() - Date.parse(call.created_at) > AI_CALL_POLL_LIMIT_MS) return false
+  if (!call.completed_at) return true
+  return call.summary_source === 'FALLBACK'
 }
 
 interface LeadDetailProps {
@@ -160,9 +188,20 @@ export function LeadDetail({
   //
   // Reading it off the fetched timeline needs no state to survive, so a
   // reload, a tab restore or a second browser all resume polling on their own.
+  // This lead's newest call, in-flight ones included. The card beside it asks
+  // only for *completed* calls, so during a call it has nothing to look at and
+  // cannot drive its own refresh — this one can, and it covers the whole span.
+  const watchedCall = useVoiceCalls(workspaceId, {
+    leadId: lead.id,
+    limit: 1,
+    refetchInterval: (query) =>
+      callNeedsWatching(query.state.data?.items[0]) ? AI_CALL_POLL_MS : false,
+  })
+  const watching = callNeedsWatching(watchedCall.data?.items[0])
+
   const timeline = useLeadTimeline(workspaceId, lead.id, {
     refetchInterval: (query) =>
-      awaitingExecution || awaitingSummaryUpgrade(query.state.data?.items)
+      awaitingExecution || watching || awaitingSummaryUpgrade(query.state.data?.items)
         ? AI_CALL_POLL_MS
         : false,
   })
@@ -220,16 +259,28 @@ export function LeadDetail({
   }, [awaitingExecution, timeline.data, timeline.dataUpdatedAt, refreshLeadData])
 
   // The effect above refreshes the lead's own fields when *this* panel was
-  // waiting on the call. After a reload nothing is waiting, so the upgrade
-  // would land in the timeline while the field grid still showed the values
-  // from before Bolna's extraction. Watching the derived flag fall covers that
-  // case too, and fires once rather than on every poll.
-  const pendingSummary = awaitingSummaryUpgrade(timeline.data?.items)
-  const wasPendingSummary = useRef(pendingSummary)
+  // waiting on the call. After a reload nothing is waiting, so the summary
+  // would land while the field grid still showed values from before Bolna's
+  // extraction — and, more visibly, while the AI Call Summary card still read
+  // "No completed AI call yet".
+  //
+  // Either signal falling means the call has settled, and both are needed.
+  // `watching` covers a call whose record is still moving — the mid-call
+  // reload. The timeline flag covers a call whose record settled before this
+  // panel opened but whose summary is still catching up. Dropping the second
+  // when the first was added broke two tests: a call old enough that
+  // `callNeedsWatching` ignores it never fired a refresh, so the card kept
+  // reading the fallback.
+  //
+  // Fires once on the transition rather than on every poll. Invalidating the
+  // calls key refetches the watcher too, which is harmless: settled data keeps
+  // both flags false, so the transition cannot repeat.
+  const settling = watching || awaitingSummaryUpgrade(timeline.data?.items)
+  const wasSettling = useRef(settling)
   useEffect(() => {
-    if (wasPendingSummary.current && !pendingSummary) void refreshLeadData()
-    wasPendingSummary.current = pendingSummary
-  }, [pendingSummary, refreshLeadData])
+    if (wasSettling.current && !settling) void refreshLeadData()
+    wasSettling.current = settling
+  }, [settling, refreshLeadData])
 
   const rendererFor = (field: LeadField) =>
     fieldTypes.find((spec) => spec.key === field.field_type)?.renderer

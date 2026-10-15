@@ -68,6 +68,18 @@ const base = (workspaceId: string) => `/workspaces/${workspaceId}/voice`
 
 export const callsKey = (workspaceId: string) => ['voice-calls', workspaceId] as const
 
+/**
+ * A poll interval that may depend on what the last fetch returned.
+ *
+ * A call is worth re-reading while it is still running, or while it has
+ * finished but Bolna's summary has not arrived — neither of which the caller
+ * can know before the query runs, so React Query hands it the query instead.
+ */
+type CallsPoll =
+  | number
+  | false
+  | ((query: { state: { data?: Page<VoiceCallSummary> } }) => number | false)
+
 interface CallListOptions {
   /** Restrict to one lead — the lead panel's card always does. */
   readonly leadId?: string
@@ -75,11 +87,13 @@ interface CallListOptions {
   readonly completedOnly?: boolean
   readonly limit?: number
   readonly enabled?: boolean
+  readonly refetchInterval?: CallsPoll
 }
 
 export function useVoiceCalls(workspaceId: string, options: CallListOptions = {}) {
   const { leadId, completedOnly = false, limit = 50, enabled = true } = options
   return useQuery({
+    refetchInterval: options.refetchInterval ?? false,
     queryKey: [...callsKey(workspaceId), { leadId: leadId ?? null, completedOnly, limit }] as const,
     enabled,
     queryFn: () =>

@@ -353,6 +353,31 @@ const AWAITING: StubOptions = {
   timeline: FALLBACK_TIMELINE,
 }
 
+/**
+ * A call that is still running: dispatched, nothing completed, and no timeline
+ * entry at all — which is exactly what a page reloaded mid-call sees.
+ *
+ * `created_at` is now, because the panel decides whether a call is still worth
+ * reading from its age.
+ */
+const IN_FLIGHT_CALL = voiceCall({
+  id: 'call-in-flight',
+  execution_id: 'exec-in-flight',
+  status: 'DISPATCHED',
+  bolna_status: 'queued',
+  duration_seconds: null,
+  summary: null,
+  summary_source: null,
+  created_at: new Date().toISOString(),
+  dispatched_at: new Date().toISOString(),
+  completed_at: null,
+})
+
+const MID_CALL: StubOptions = {
+  voiceCalls: [IN_FLIGHT_CALL],
+  timeline: TIMELINE,
+}
+
 /** Start an AI call from the open lead panel, so the panel begins polling. */
 async function startAiCall(page: Page) {
   await page.getByRole('button', { name: 'AI Call', exact: true }).click()
@@ -434,6 +459,28 @@ test.describe('the AI summary appears without a manual refresh', () => {
     await expect(page.getByTestId('ai-call-summary-text')).toHaveText(UPGRADED_SUMMARY, {
       timeout: 20_000,
     })
+  })
+
+  test('a panel reloaded mid-call sees the summary when the call lands', async ({ page }) => {
+    // The gap the first fix left, and the one the user hit. Nothing is written
+    // to the timeline until the call hangs up, so a page reloaded *during* a
+    // call has no `CALL_LOGGED` action to wait on and nothing in the card:
+    // both earlier conditions are false and polling never starts. Production,
+    // 2026-10-15: the call ran 14:20:20 to 14:22:39 and the action did not
+    // exist until 14:23:12, so most of that window was unwatched.
+    //
+    // The call record covers the whole span, so the panel watches that instead.
+    const stub = await signIn(page, MID_CALL)
+    await openLead(page)
+    await expect(page.getByTestId('ai-call-summary-card')).toContainText('No completed AI call yet')
+
+    stub.finishAiCall(UPGRADED_SUMMARY)
+
+    await expect(page.getByTestId('ai-call-summary-text')).toHaveText(UPGRADED_SUMMARY, {
+      timeout: 20_000,
+    })
+    // Status and duration come with it, which is what the card is for.
+    await expect(page.getByTestId('ai-call-summary-card')).toContainText('Completed')
   })
 
   test('a cold panel stops polling once the summary has landed', async ({ page }) => {
