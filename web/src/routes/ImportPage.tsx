@@ -130,7 +130,7 @@ export function ImportPage() {
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-xl font-semibold">Import</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Import</h1>
         <p className="text-muted-foreground text-sm">
           Upload a spreadsheet, choose what the columns mean, see what it would do, then commit.
         </p>

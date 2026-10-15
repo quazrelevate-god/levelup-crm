@@ -98,7 +98,7 @@ test.describe('AI Call Summary card', () => {
 
     const card = page.getByTestId('ai-call-summary-card')
     await expect(card).toBeVisible()
-    await expect(card.getByText('🤖 AI Call Summary')).toBeVisible()
+    await expect(card.getByText('AI Call Summary')).toBeVisible()
     await expect(card.getByText('Call placed by AI')).toBeVisible()
     await expect(page.getByTestId('ai-call-summary-text')).toHaveText(NEWEST_SUMMARY)
 
@@ -118,7 +118,7 @@ test.describe('AI Call Summary card', () => {
     // The card lives in the existing section, after the AI Call button.
     const panel = page.getByTestId('lead-detail')
     await expect(panel.getByRole('heading', { name: 'Log activity' })).toBeVisible()
-    await expect(panel.getByRole('button', { name: '🤖 AI Call' })).toBeVisible()
+    await expect(panel.getByRole('button', { name: 'AI Call' })).toBeVisible()
     await expect(panel.getByTestId('ai-call-summary-card')).toBeVisible()
     // And the sections around it are untouched.
     await expect(panel.getByRole('heading', { name: 'Timeline' })).toBeVisible()

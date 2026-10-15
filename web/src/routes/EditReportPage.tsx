@@ -76,7 +76,7 @@ export function EditReportPage() {
     <div className="space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold">Edit report</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Edit report</h1>
           <p className="text-muted-foreground text-sm">
             Every batch of changes, and how to reverse one.
           </p>

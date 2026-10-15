@@ -66,7 +66,7 @@ export function TemplatesPage() {
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-xl font-semibold">Message templates</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Message templates</h1>
         <p className="text-muted-foreground text-sm">
           Canned WhatsApp, SMS and email bodies. Placeholders resolve against a lead when you
           compose, through the same projection that governs every other read.

@@ -51,6 +51,7 @@ import {
   useUpdateLead,
 } from '@/features/leads/api'
 import { LeadTimeline } from '@/features/leads/LeadTimeline'
+import { StarRating } from '@/features/leads/StarRating'
 import { LeadLabels } from '@/features/work/LeadLabels'
 import { LeadTasks } from '@/features/work/LeadTasks'
 
@@ -290,7 +291,7 @@ export function LeadDetail({
 
   return (
     <aside
-      className="bg-background fixed inset-y-0 right-0 z-40 w-full max-w-2xl overflow-y-auto border-l p-6 shadow-xl"
+      className="bg-card shadow-e3 fixed inset-y-0 right-0 z-40 w-full max-w-2xl overflow-y-auto border-l p-6"
       aria-label="Lead detail"
       data-testid="lead-detail"
     >
@@ -379,26 +380,15 @@ export function LeadDetail({
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="lead-rating">Rating</Label>
-            <Select
-              id="lead-rating"
-              value={lead.rating === null ? '' : String(lead.rating)}
-              onChange={(event) =>
-                void run(
-                  updateLead.mutateAsync({
-                    leadId: lead.id,
-                    rating: event.target.value === '' ? null : Number(event.target.value),
-                  }),
-                )
+            <span className="flex items-center gap-2 text-sm leading-none font-medium select-none">
+              Rating
+            </span>
+            <StarRating
+              value={lead.rating}
+              onChange={(next) =>
+                void run(updateLead.mutateAsync({ leadId: lead.id, rating: next }))
               }
-            >
-              <option value="">None</option>
-              {[1, 2, 3, 4, 5].map((value) => (
-                <option key={value} value={value}>
-                  {value}
-                </option>
-              ))}
-            </Select>
+            />
           </div>
         </div>
       </section>
@@ -465,7 +455,7 @@ export function LeadDetail({
             disabled={triggerVoiceCall.isPending}
             onClick={() => void startVoiceCall()}
           >
-            {triggerVoiceCall.isPending ? 'Starting AI call…' : '🤖 AI Call'}
+            {triggerVoiceCall.isPending ? 'Starting AI call…' : 'AI Call'}
           </Button>
           {voiceNotice ? (
             <p role="status" className="text-muted-foreground text-sm">

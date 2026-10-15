@@ -35,7 +35,7 @@ export function WorkspacePickerPage() {
     <main className="bg-muted/30 flex min-h-screen items-center justify-center p-6">
       <div className="flex w-full max-w-2xl flex-col gap-4">
         <div className="flex items-baseline justify-between">
-          <h1 className="text-xl font-semibold">Choose a workspace</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Choose a workspace</h1>
           <Button variant="ghost" size="sm" onClick={() => void logout()}>
             Sign out
           </Button>

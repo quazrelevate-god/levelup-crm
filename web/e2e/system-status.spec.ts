@@ -19,7 +19,7 @@ async function signInThenOpenStatus(page: Page) {
   await page.getByLabel('Password').fill('correct-horse-battery-staple')
   await page.getByRole('button', { name: 'Sign in' }).click()
   await expect(page.getByRole('heading', { name: 'Leads' })).toBeVisible()
-  await page.getByRole('link', { name: 'System' }).click()
+  await page.goto('/settings/system')
 }
 
 const HEALTH_ROUTE = '**/api/v1/health'

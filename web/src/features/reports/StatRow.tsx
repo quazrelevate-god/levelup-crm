@@ -9,8 +9,11 @@
  * must align vertically, which these do not.
  */
 
+import { AlertTriangle, CalendarClock, PhoneOff, type LucideIcon } from 'lucide-react'
+
 import type { FollowUpCounts } from '@/api/types'
 import { Card, CardContent } from '@/components/ui/card'
+import { cn } from '@/lib/utils'
 
 export interface StatRowProps {
   readonly counts: FollowUpCounts | undefined
@@ -27,12 +30,20 @@ export function StatRow({ counts, loading = false, error = null }: StatRowProps)
     )
   }
 
-  const tiles = [
+  const tiles: readonly {
+    key: string
+    label: string
+    value: number
+    hint: string
+    icon: LucideIcon
+    urgent: boolean
+  }[] = [
     {
       key: 'late',
       label: 'Late',
       value: counts?.late ?? 0,
       hint: 'Overdue follow-ups, right now',
+      icon: AlertTriangle,
       // Status is carried by an icon *and* a label, never by colour alone —
       // and only when there is actually something wrong.
       urgent: (counts?.late ?? 0) > 0,
@@ -42,6 +53,7 @@ export function StatRow({ counts, loading = false, error = null }: StatRowProps)
       label: 'Upcoming',
       value: counts?.upcoming ?? 0,
       hint: 'Scheduled and not yet due',
+      icon: CalendarClock,
       urgent: false,
     },
     {
@@ -49,30 +61,45 @@ export function StatRow({ counts, loading = false, error = null }: StatRowProps)
       label: 'Never contacted',
       value: counts?.never_contacted ?? 0,
       hint: 'No timeline entry at all',
+      icon: PhoneOff,
       urgent: false,
     },
   ]
 
   return (
     <div className="grid gap-3 sm:grid-cols-3">
-      {tiles.map((tile) => (
-        <Card key={tile.key} data-testid="stat-tile">
-          <CardContent className="pt-6">
-            <div className="text-muted-foreground flex items-center gap-1.5 text-xs uppercase">
-              {tile.urgent ? (
-                <span className="text-destructive" aria-hidden>
-                  ▲
+      {tiles.map((tile) => {
+        const Icon = tile.icon
+        return (
+          <Card key={tile.key} data-testid="stat-tile" className="gap-0 py-5">
+            <CardContent className="flex items-start gap-4">
+              <span
+                aria-hidden="true"
+                className={cn(
+                  'flex size-10 shrink-0 items-center justify-center rounded-xl',
+                  tile.urgent ? 'bg-destructive/12 text-destructive' : 'bg-primary/10 text-primary',
+                )}
+              >
+                <Icon className="size-5" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="text-muted-foreground block text-[0.6875rem] font-semibold tracking-wider uppercase">
+                  {tile.label}
                 </span>
-              ) : null}
-              {tile.label}
-            </div>
-            <div className="mt-1 text-3xl font-semibold">
-              {loading ? '—' : tile.value.toLocaleString()}
-            </div>
-            <p className="text-muted-foreground mt-1 text-xs">{tile.hint}</p>
-          </CardContent>
-        </Card>
-      ))}
+                <span
+                  className={cn(
+                    'mt-0.5 block text-3xl leading-none font-semibold tracking-tight',
+                    tile.urgent && 'text-destructive',
+                  )}
+                >
+                  {loading ? '—' : tile.value.toLocaleString()}
+                </span>
+                <span className="text-muted-foreground mt-1.5 block text-xs">{tile.hint}</span>
+              </span>
+            </CardContent>
+          </Card>
+        )
+      })}
     </div>
   )
 }

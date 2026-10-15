@@ -76,7 +76,7 @@ export function ScheduledReportsPage() {
     <div className="space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold">Scheduled reports</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Scheduled reports</h1>
           <p className="text-muted-foreground text-sm">
             Sent on the workspace&rsquo;s clock &mdash; <strong>{timezone}</strong>.
           </p>

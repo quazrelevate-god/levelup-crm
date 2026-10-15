@@ -26,7 +26,7 @@ async function signIn(page: Page, options = {}) {
   await page.getByLabel('Password').fill('correct-horse-battery-staple')
   await page.getByRole('button', { name: 'Sign in' }).click()
   await expect(page.getByRole('heading', { name: 'Leads' })).toBeVisible()
-  await page.getByRole('link', { name: 'Integrations' }).click()
+  await page.goto('/settings/integrations')
   await expect(page.getByRole('heading', { name: 'Integrations' })).toBeVisible()
   return stub
 }

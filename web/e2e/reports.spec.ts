@@ -123,7 +123,7 @@ test.describe('the dashboard', () => {
 test.describe('the dashboard editor', () => {
   test('the widget list comes from the server', async ({ page }) => {
     await signIn(page)
-    await page.getByRole('link', { name: 'Dashboards', exact: true }).click()
+    await page.goto('/settings/dashboards')
     await expect(page.getByRole('heading', { name: 'Dashboards' })).toBeVisible()
 
     // A hardcoded list here would need a release every time the backend grew a
@@ -134,7 +134,7 @@ test.describe('the dashboard editor', () => {
 
   test('the catalogue names kinds of chart, never subjects', async ({ page }) => {
     await signIn(page)
-    await page.getByRole('link', { name: 'Dashboards', exact: true }).click()
+    await page.goto('/settings/dashboards')
     // There is no "leads by source" widget, because which field means source
     // is the customer's decision.
     for (const forbidden of ['by source', 'by course', 'by status']) {
@@ -144,7 +144,7 @@ test.describe('the dashboard editor', () => {
 
   test('a breakdown widget asks which field, from the served schema', async ({ page }) => {
     const stub = await signIn(page)
-    await page.getByRole('link', { name: 'Dashboards', exact: true }).click()
+    await page.goto('/settings/dashboards')
     await page.getByRole('button', { name: 'New dashboard' }).click()
 
     await page.getByLabel('Name').fill('Channels')
@@ -174,7 +174,7 @@ test.describe('the dashboard editor', () => {
 
   test('binding to a template is offered as giving it to a role', async ({ page }) => {
     await signIn(page)
-    await page.getByRole('link', { name: 'Dashboards', exact: true }).click()
+    await page.goto('/settings/dashboards')
     await page.getByRole('button', { name: 'New dashboard' }).click()
 
     const roles = page.getByLabel('Give it to a role')
@@ -187,7 +187,7 @@ test.describe('the dashboard editor', () => {
 
   test('an existing dashboard lists its widget count', async ({ page }) => {
     await signIn(page)
-    await page.getByRole('link', { name: 'Dashboards', exact: true }).click()
+    await page.goto('/settings/dashboards')
     const row = page.getByTestId('dashboard-row').first()
     await expect(row).toContainText('Morning check')
     await expect(row).toContainText('3 widgets')

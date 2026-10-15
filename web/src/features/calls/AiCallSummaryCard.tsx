@@ -41,7 +41,7 @@ export function AiCallSummaryCard({ workspaceId, leadId }: AiCallSummaryCardProp
   if (!call) {
     return (
       <div className="rounded-md border p-3 text-sm" data-testid="ai-call-summary-card">
-        <p className="mb-1 font-medium">🤖 AI Call Summary</p>
+        <p className="mb-1 font-medium">AI Call Summary</p>
         <p className="text-muted-foreground">No completed AI call yet.</p>
       </div>
     )
@@ -52,7 +52,7 @@ export function AiCallSummaryCard({ workspaceId, leadId }: AiCallSummaryCardProp
   return (
     <div className="space-y-2 rounded-md border p-3 text-sm" data-testid="ai-call-summary-card">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="font-medium">🤖 AI Call Summary</span>
+        <span className="font-medium">AI Call Summary</span>
         <Badge variant="outline">Call placed by AI</Badge>
       </div>
 

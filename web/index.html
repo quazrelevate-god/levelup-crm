@@ -3,7 +3,31 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>CRM</title>
+    <meta name="color-scheme" content="light dark" />
+    <title>LevelUp CRM</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script>
+      // Applied before first paint. Reading the preference inside React means
+      // one frame of light theme before the class lands, which on a dark
+      // surface is a white flash straight into the user's face.
+      ;(function () {
+        try {
+          var stored = localStorage.getItem('crm.theme') || 'system'
+          var dark =
+            stored === 'dark' ||
+            (stored === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+          document.documentElement.classList.toggle('dark', dark)
+          document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
+        } catch (e) {
+          /* no stored preference is the default, not a failure */
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

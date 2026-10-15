@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
+import { AudioLines } from 'lucide-react'
 
 import { ApiError } from '@/api/client'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAuth } from '@/features/auth/context'
@@ -53,66 +54,77 @@ export function LoginPage() {
   }
 
   return (
-    <main className="bg-muted/30 flex min-h-screen items-center justify-center p-6">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle>Sign in</CardTitle>
-          <CardDescription>Access your workspace</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form
-            className="flex flex-col gap-4"
-            onSubmit={(event) => void handleSubmit(event)}
-            noValidate
+    <main className="flex min-h-screen items-center justify-center p-6">
+      <div className="w-full max-w-sm">
+        <div className="mb-7 flex flex-col items-center gap-3 text-center">
+          <span
+            aria-hidden="true"
+            className="bg-primary text-primary-foreground shadow-e2 flex size-12 items-center justify-center rounded-2xl"
           >
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                name="email"
-                type="email"
-                autoComplete="username"
-                required
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-              />
-            </div>
+            <AudioLines className="size-6" />
+          </span>
+          <span>
+            <h1 className="text-xl font-semibold tracking-tight">LevelUp CRM</h1>
+            <p className="text-muted-foreground mt-1 text-sm">Sign in to your workspace.</p>
+          </span>
+        </div>
 
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                name="password"
-                type="password"
-                autoComplete="current-password"
-                required
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-              />
-            </div>
+        <Card className="glass shadow-e2 w-full">
+          <CardContent>
+            <form
+              className="flex flex-col gap-4"
+              onSubmit={(event) => void handleSubmit(event)}
+              noValidate
+            >
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="email">Email</Label>
+                <Input
+                  id="email"
+                  name="email"
+                  type="email"
+                  autoComplete="username"
+                  required
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                />
+              </div>
 
-            {error ? (
-              <p role="alert" className="text-destructive text-sm">
-                {error}
-              </p>
-            ) : null}
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="password">Password</Label>
+                <Input
+                  id="password"
+                  name="password"
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                />
+              </div>
 
-            <Button type="submit" disabled={submitting}>
-              {submitting ? 'Signing in…' : 'Sign in'}
-            </Button>
+              {error ? (
+                <p role="alert" className="text-destructive text-sm">
+                  {error}
+                </p>
+              ) : null}
 
-            {/* Without this the reset flow exists and nobody can reach it —
+              <Button type="submit" size="lg" disabled={submitting}>
+                {submitting ? 'Signing in…' : 'Sign in'}
+              </Button>
+
+              {/* Without this the reset flow exists and nobody can reach it —
                 and since the workspace model is invite-only, an invitee whose
                 link expired has no other way back in. */}
-            <Link
-              to="/forgot-password"
-              className="text-muted-foreground text-center text-xs underline"
-            >
-              Forgotten your password?
-            </Link>
-          </form>
-        </CardContent>
-      </Card>
+              <Link
+                to="/forgot-password"
+                className="text-muted-foreground text-center text-xs underline"
+              >
+                Forgotten your password?
+              </Link>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
     </main>
   )
 }

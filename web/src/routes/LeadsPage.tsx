@@ -34,6 +34,7 @@ import type {
 } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { PageHeader, Toolbar } from '@/components/ui/page-header'
 import { Dialog } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -240,45 +241,47 @@ export function LeadsPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold">Leads</h1>
-          <p className="text-muted-foreground text-sm">
+      <PageHeader
+        title="Leads"
+        description={
+          <>
             {(results.data?.total ?? 0).toLocaleString()} lead
             {results.data?.total === 1 ? '' : 's'}
             {ruleCount > 0 ? ` matching ${ruleCount} rule${ruleCount === 1 ? '' : 's'}` : ''}
-          </p>
-        </div>
+          </>
+        }
+      />
 
-        <div className="flex flex-wrap gap-2">
-          <Select
-            aria-label="Saved filter"
-            className="w-52"
-            value={activeFilterId ?? ''}
-            onChange={(event) => applySavedFilter(event.target.value)}
-          >
-            <option value="">All leads</option>
-            {(savedFilters.data ?? []).map((saved) => (
-              <option key={saved.id} value={saved.id}>
-                {saved.name}
-                {saved.visibility === 'SHARED' ? ' (shared)' : ''}
-                {saved.visibility === 'ROLE' ? ' (role)' : ''}
-              </option>
-            ))}
-          </Select>
-          <Input
-            className="max-w-56"
-            placeholder="Search by identifier"
-            aria-label="Search leads"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-          />
-          <Button variant="outline" onClick={() => setBuilderOpen((open) => !open)}>
-            Filters{ruleCount > 0 ? ` (${ruleCount})` : ''}
-          </Button>
-          <Button variant="outline" onClick={() => setColumnsOpen(true)}>
-            Columns
-          </Button>
+      <Toolbar>
+        <Select
+          aria-label="Saved filter"
+          className="w-52"
+          value={activeFilterId ?? ''}
+          onChange={(event) => applySavedFilter(event.target.value)}
+        >
+          <option value="">All leads</option>
+          {(savedFilters.data ?? []).map((saved) => (
+            <option key={saved.id} value={saved.id}>
+              {saved.name}
+              {saved.visibility === 'SHARED' ? ' (shared)' : ''}
+              {saved.visibility === 'ROLE' ? ' (role)' : ''}
+            </option>
+          ))}
+        </Select>
+        <Input
+          className="max-w-56"
+          placeholder="Search by identifier"
+          aria-label="Search leads"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+        />
+        <Button variant="outline" onClick={() => setBuilderOpen((open) => !open)}>
+          Filters{ruleCount > 0 ? ` (${ruleCount})` : ''}
+        </Button>
+        <Button variant="outline" onClick={() => setColumnsOpen(true)}>
+          Columns
+        </Button>
+        <div className="ml-auto flex flex-wrap items-center gap-2">
           <Button
             variant="outline"
             disabled={exporting}
@@ -311,7 +314,7 @@ export function LeadsPage() {
           </Button>
           <Button onClick={() => setCreateOpen(true)}>Add lead</Button>
         </div>
-      </header>
+      </Toolbar>
 
       {error ? (
         <p role="alert" className="text-destructive text-sm">

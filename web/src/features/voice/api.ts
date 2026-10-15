@@ -34,8 +34,7 @@ export interface VoiceExtractionMappingUpdate {
   readonly is_enabled?: boolean
 }
 
-const listKey = (workspaceId: string) =>
-  ['voice-extraction-mappings', workspaceId] as const
+const listKey = (workspaceId: string) => ['voice-extraction-mappings', workspaceId] as const
 
 function base(workspaceId: string): string {
   return `/workspaces/${workspaceId}/voice/extraction-mappings`

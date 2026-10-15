@@ -4,16 +4,28 @@ import * as React from 'react'
 
 import { cn } from '@/lib/utils'
 
+/**
+ * Tonal rather than filled.
+ *
+ * A badge sits inside a dense table row; a saturated fill at that size reads as
+ * a button and pulls the eye off the data. The tonal pair — low-chroma
+ * background, high-contrast text of the same hue — is Material's answer and it
+ * keeps the 4.5:1 the label needs.
+ */
 const badgeVariants = cva(
-  'inline-flex items-center justify-center rounded-md border px-2 py-0.5 text-xs font-medium w-fit whitespace-nowrap shrink-0 gap-1 [&>svg]:size-3 [&>svg]:pointer-events-none transition-[color,box-shadow] overflow-hidden',
+  [
+    'inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden',
+    'rounded-full border px-2.5 py-0.5 text-xs font-medium whitespace-nowrap',
+    'transition-[color,box-shadow] [&>svg]:pointer-events-none [&>svg]:size-3',
+  ].join(' '),
   {
     variants: {
       variant: {
-        default: 'border-transparent bg-primary text-primary-foreground',
+        default: 'border-primary/20 bg-primary/12 text-primary',
         secondary: 'border-transparent bg-secondary text-secondary-foreground',
-        destructive: 'border-transparent bg-destructive text-destructive-foreground',
-        success: 'border-transparent bg-success text-success-foreground',
-        outline: 'text-foreground',
+        destructive: 'border-destructive/20 bg-destructive/12 text-destructive',
+        success: 'border-success/25 bg-success/14 text-success',
+        outline: 'border-border bg-surface/60 text-foreground',
       },
     },
     defaultVariants: {

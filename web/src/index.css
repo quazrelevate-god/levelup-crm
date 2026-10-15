@@ -3,9 +3,30 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * LevelUp CRM — client-facing design system.
+ *
+ * Three languages, deliberately mixed in fixed proportions rather than evenly:
+ *
+ * - **Material** carries the structure. Elevation, state layers and the type
+ *   scale do the real work of saying what is on top of what and what responds
+ *   to a pointer. It is the only one of the three that is a *system*.
+ * - **Glass** is for chrome only — the sidebar, the top bar, dialogs. Things
+ *   that float above content and should let it show through.
+ * - **Neumorphism** is for resting surfaces only, at low strength. Full
+ *   neumorphism puts controls at the same luminance as their background, which
+ *   is why it fails contrast; here it is a soft dual shadow on cards and never
+ *   the thing that signals "this is a button".
+ *
+ * The rule that keeps the blend honest: **nothing conveys state by shadow
+ * alone.** Colour, text or a border always says it too.
+ */
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-foreground: var(--surface-foreground);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
@@ -22,62 +43,148 @@
   --color-destructive-foreground: var(--destructive-foreground);
   --color-success: var(--success);
   --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 10px);
+
+  --font-sans:
+    'Inter var', 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  --ease-emphasized: cubic-bezier(0.2, 0, 0, 1);
+  --ease-standard: cubic-bezier(0.2, 0, 0.2, 1);
 }
 
 :root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.985 0 0);
-  --success: oklch(0.596 0.145 163.225);
-  --success-foreground: oklch(0.985 0 0);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  --radius: 0.875rem;
+
+  /* Light. The page is a shade off-white so a raised surface can be lighter
+   * than it — neumorphism needs somewhere to go in both directions. */
+  --background: oklch(0.967 0.004 264);
+  --foreground: oklch(0.21 0.03 264);
+  --surface: oklch(0.986 0.003 264);
+  --surface-foreground: oklch(0.21 0.03 264);
+  --card: oklch(0.995 0.002 264);
+  --card-foreground: oklch(0.21 0.03 264);
+  --popover: oklch(0.995 0.002 264);
+  --popover-foreground: oklch(0.21 0.03 264);
+
+  /* Neutral by request. Highlight is carried by weight and value, not hue —
+   * which also means the one genuinely coloured thing left on screen is a
+   * status (destructive, success, warning), so colour always means something. */
+  --primary: oklch(0.33 0.006 264);
+  --primary-foreground: oklch(0.99 0.002 264);
+  --secondary: oklch(0.94 0.012 264);
+  --secondary-foreground: oklch(0.3 0.04 264);
+  --muted: oklch(0.945 0.008 264);
+  --muted-foreground: oklch(0.52 0.025 264);
+  --accent: oklch(0.925 0.005 264);
+  --accent-foreground: oklch(0.33 0.006 264);
+
+  --destructive: oklch(0.577 0.225 27.3);
+  --destructive-foreground: oklch(0.99 0.002 264);
+  --success: oklch(0.58 0.14 163);
+  --success-foreground: oklch(0.99 0.002 264);
+  --warning: oklch(0.72 0.15 70);
+  --warning-foreground: oklch(0.24 0.04 70);
+
+  --border: oklch(0.89 0.008 264);
+  --input: oklch(0.91 0.008 264);
+  --ring: oklch(0.47 0.006 264);
+
+  /* Glass — chrome only. */
+  --glass-bg: oklch(0.995 0.002 264 / 72%);
+  --glass-border: oklch(1 0 0 / 70%);
+  --glass-blur: 20px;
+
+  /* Material elevation, tinted with the brand hue rather than pure black so
+   * shadows sit in the same colour world as everything else. */
+  --elevation-1: 0 1px 2px oklch(0.3 0.04 264 / 6%), 0 1px 3px oklch(0.3 0.04 264 / 5%);
+  --elevation-2: 0 2px 6px oklch(0.3 0.04 264 / 7%), 0 6px 16px oklch(0.3 0.04 264 / 7%);
+  --elevation-3: 0 8px 24px oklch(0.3 0.04 264 / 10%), 0 2px 6px oklch(0.3 0.04 264 / 6%);
+
+  /* Neumorphism, at about a third of the usual strength. */
+  --neu-raised: 6px 6px 16px oklch(0.62 0.03 264 / 14%), -6px -6px 14px oklch(1 0 0 / 85%);
+  --neu-raised-sm: 3px 3px 8px oklch(0.62 0.03 264 / 12%), -3px -3px 7px oklch(1 0 0 / 80%);
+  --neu-inset: inset 2px 2px 5px oklch(0.62 0.03 264 / 14%), inset -2px -2px 5px oklch(1 0 0 / 75%);
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --destructive-foreground: oklch(0.985 0 0);
-  --success: oklch(0.696 0.17 162.48);
-  --success-foreground: oklch(0.145 0 0);
-  --border: oklch(1 0 0 / 10%);
+  --background: oklch(0.175 0.015 264);
+  --foreground: oklch(0.96 0.004 264);
+  --surface: oklch(0.215 0.018 264);
+  --surface-foreground: oklch(0.96 0.004 264);
+  --card: oklch(0.235 0.02 264);
+  --card-foreground: oklch(0.96 0.004 264);
+  --popover: oklch(0.235 0.02 264);
+  --popover-foreground: oklch(0.96 0.004 264);
+
+  --primary: oklch(0.87 0.004 264);
+  --primary-foreground: oklch(0.2 0.01 264);
+  --secondary: oklch(0.29 0.022 264);
+  --secondary-foreground: oklch(0.94 0.006 264);
+  --muted: oklch(0.28 0.02 264);
+  --muted-foreground: oklch(0.72 0.02 264);
+  --accent: oklch(0.32 0.008 264);
+  --accent-foreground: oklch(0.92 0.004 264);
+
+  --destructive: oklch(0.7 0.19 22.2);
+  --destructive-foreground: oklch(0.16 0.02 264);
+  --success: oklch(0.72 0.16 162);
+  --success-foreground: oklch(0.16 0.02 264);
+  --warning: oklch(0.79 0.15 72);
+  --warning-foreground: oklch(0.2 0.03 72);
+
+  --border: oklch(1 0 0 / 11%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
+  --ring: oklch(0.65 0.006 264);
+
+  --glass-bg: oklch(0.235 0.02 264 / 68%);
+  --glass-border: oklch(1 0 0 / 11%);
+
+  --elevation-1: 0 1px 2px oklch(0 0 0 / 40%), 0 1px 3px oklch(0 0 0 / 30%);
+  --elevation-2: 0 2px 6px oklch(0 0 0 / 42%), 0 6px 16px oklch(0 0 0 / 34%);
+  --elevation-3: 0 8px 24px oklch(0 0 0 / 50%), 0 2px 6px oklch(0 0 0 / 36%);
+
+  /* In the dark the "light" side of a neumorphic pair cannot be white, or the
+   * surface looks plastic. It is a lift of the surface itself. */
+  --neu-raised: 6px 6px 16px oklch(0 0 0 / 45%), -6px -6px 14px oklch(1 0 0 / 4.5%);
+  --neu-raised-sm: 3px 3px 8px oklch(0 0 0 / 40%), -3px -3px 7px oklch(1 0 0 / 4%);
+  --neu-inset: inset 2px 2px 5px oklch(0 0 0 / 45%), inset -2px -2px 5px oklch(1 0 0 / 4%);
+}
+
+/*
+ * Shadows as `@utility`, not `--shadow-*` theme entries.
+ *
+ * The theme-namespace form generated no rule at all here, so every `shadow-e*`
+ * and `shadow-neu*` class in the app silently did nothing — the elevation
+ * system was written and never applied. `@utility` produces a real utility,
+ * which is also what makes `hover:shadow-e2` possible.
+ */
+@utility shadow-e1 {
+  box-shadow: var(--elevation-1);
+}
+@utility shadow-e2 {
+  box-shadow: var(--elevation-2);
+}
+@utility shadow-e3 {
+  box-shadow: var(--elevation-3);
+}
+@utility shadow-neu {
+  box-shadow: var(--neu-raised);
+}
+@utility shadow-neu-sm {
+  box-shadow: var(--neu-raised-sm);
+}
+@utility shadow-neu-inset {
+  box-shadow: var(--neu-inset);
 }
 
 @layer base {
@@ -85,49 +192,152 @@
     @apply border-border outline-ring/50;
   }
 
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground font-sans;
     font-feature-settings:
       'rlig' 1,
-      'calt' 1;
+      'calt' 1,
+      'ss01' 1;
+    /* A single very wide, very faint brand wash. It gives the glass chrome
+     * something to refract; without it, blur over a flat colour is invisible
+     * and the effect costs GPU for nothing. */
+    background-image:
+      radial-gradient(1200px 680px at 8% -10%, oklch(0.42 0.006 264 / 6%), transparent 60%),
+      radial-gradient(1000px 600px at 100% 0%, oklch(0.42 0.004 264 / 5%), transparent 55%);
+    background-attachment: fixed;
+  }
+
+  .dark body {
+    background-image:
+      radial-gradient(1200px 680px at 8% -10%, oklch(0.75 0.004 264 / 7%), transparent 60%),
+      radial-gradient(1000px 600px at 100% 0%, oklch(0.75 0.004 264 / 5%), transparent 55%);
+  }
+
+  /* Native controls follow the brand instead of the OS blue. The old build had
+   * three different blues on screen at once, one of them the UA default. */
+  input[type='checkbox'],
+  input[type='radio'],
+  progress {
+    accent-color: var(--primary);
+  }
+
+  ::selection {
+    background: oklch(0.45 0.006 264 / 20%);
+  }
+
+  ::-webkit-scrollbar {
+    width: 11px;
+    height: 11px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--muted-foreground);
+    background-clip: content-box;
+  }
+}
+
+@layer components {
+  /* Chrome that floats over content. */
+  .glass {
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+    border-color: var(--glass-border);
+  }
+
+  /* Where backdrop-filter is unsupported the panel would be semi-transparent
+   * over live content, which is unreadable rather than merely plain. */
+  @supports not (backdrop-filter: blur(1px)) {
+    .glass {
+      background: var(--card);
+    }
+  }
+
+  .neu {
+    box-shadow: var(--neu-raised);
+  }
+  .neu-sm {
+    box-shadow: var(--neu-raised-sm);
+  }
+  .neu-inset {
+    box-shadow: var(--neu-inset);
+  }
+
+  /* Material's state layer: a tint of the foreground laid over the control,
+   * so hover and press read the same on every surface colour. */
+  .state-layer {
+    position: relative;
+    isolation: isolate;
+  }
+  .state-layer::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: currentColor;
+    opacity: 0;
+    transition: opacity 150ms var(--ease-standard);
+    pointer-events: none;
+    z-index: -1;
+  }
+  .state-layer:hover::after {
+    opacity: 0.08;
+  }
+  .state-layer:active::after {
+    opacity: 0.12;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 
 /*
- * Chart tokens (M9).
+ * Chart tokens (M9), re-tuned to the new surfaces.
  *
- * From the dataviz reference palette, validated with its own script rather
- * than by eye: `validate_palette.js "#2a78d6" --mode light` and `"#3987e5"
- * --mode dark` both pass every check — lightness band, chroma floor, and 3:1
- * against each mode's surface.
- *
- * **One hue, deliberately.** Every chart here plots a single series whose job
- * is magnitude, and the form table's colour job for magnitude is "sequential
- * (one hue)". An earlier draft painted Won green and Lost red; the validator
- * put that pair at deutan ΔE 4.1 — the single worst confusion in the language —
- * and the honest reading is that outcome colour was a convention imported from
- * elsewhere, not something this data asked for. Position and label carry it
- * instead.
- *
- * The dark column is the same hue stepped for the dark surface, not an
- * automatic flip.
+ * Still one hue, and still for the reason the original note gives: every chart
+ * here plots a single series whose job is magnitude, and an earlier Won-green /
+ * Lost-red pair measured deutan ΔE 4.1 — the worst confusion in the language.
+ * Position and label carry outcome instead. What changed is only the surface
+ * and ink values, to match the redesign; the series hue is the brand hue, which
+ * is where the chart blue already was.
  */
 .viz-root {
-  --viz-surface: #fcfcfb;
-  --viz-series: #2a78d6;
-  --viz-ink: #0b0b0b;
-  --viz-ink-secondary: #52514e;
-  --viz-ink-muted: #898781;
-  --viz-grid: #e1e0d9;
-  --viz-baseline: #c3c2b7;
+  --viz-surface: oklch(0.995 0.002 264);
+  --viz-series: #55544f;
+  --viz-ink: oklch(0.21 0.03 264);
+  --viz-ink-secondary: oklch(0.42 0.025 264);
+  --viz-ink-muted: oklch(0.58 0.02 264);
+  --viz-grid: oklch(0.91 0.008 264);
+  --viz-baseline: oklch(0.84 0.01 264);
 }
 
 .dark .viz-root {
-  --viz-surface: #1a1a19;
-  --viz-series: #3987e5;
-  --viz-ink: #ffffff;
-  --viz-ink-secondary: #c3c2b7;
-  --viz-ink-muted: #898781;
-  --viz-grid: #2c2c2a;
-  --viz-baseline: #383835;
+  --viz-surface: oklch(0.235 0.02 264);
+  --viz-series: #b5b3ab;
+  --viz-ink: oklch(0.96 0.004 264);
+  --viz-ink-secondary: oklch(0.78 0.015 264);
+  --viz-ink-muted: oklch(0.64 0.02 264);
+  --viz-grid: oklch(0.32 0.02 264);
+  --viz-baseline: oklch(0.4 0.02 264);
 }

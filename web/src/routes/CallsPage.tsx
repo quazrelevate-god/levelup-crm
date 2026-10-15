@@ -11,42 +11,68 @@
  */
 
 import { Link } from 'react-router-dom'
+import { Bot, ChevronRight } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { PageHeader } from '@/components/ui/page-header'
+import { cn } from '@/lib/utils'
 import { useAuth } from '@/features/auth/context'
 import { useVoiceCalls, type VoiceCallSummary } from '@/features/calls/api'
 import { formatCallDuration, formatCallMoment, formatCallStatus } from '@/features/calls/format'
 import { toDisplayStringOr } from '@/lib/format'
 
 function CallRow({ call }: { readonly call: VoiceCallSummary }) {
+  const failed = call.status === 'FAILED'
+
   return (
-    <li className="rounded-md border p-3" data-testid="call-row">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="font-medium">
-            🤖 {toDisplayStringOr(call.lead.primary_h1, call.lead.identity_value)}
-          </p>
-          {call.lead.primary_h2 ? (
-            <p className="text-muted-foreground text-sm">
-              {toDisplayStringOr(call.lead.primary_h2)}
+    <li
+      className={cn(
+        'border-border/60 bg-card/60 relative rounded-2xl border p-3.5 transition-shadow duration-200',
+        'hover:shadow-e2 focus-within:ring-ring/45 focus-within:ring-[3px]',
+      )}
+      data-testid="call-row"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3.5">
+          <span
+            aria-hidden="true"
+            className={cn(
+              'flex size-10 shrink-0 items-center justify-center rounded-xl',
+              failed ? 'bg-destructive/12 text-destructive' : 'bg-primary/12 text-primary',
+            )}
+          >
+            <Bot className="size-5" />
+          </span>
+          <div className="min-w-0">
+            <p className="truncate font-medium">
+              {toDisplayStringOr(call.lead.primary_h1, call.lead.identity_value)}
             </p>
-          ) : null}
-          <p className="text-muted-foreground mt-1 text-xs">
-            {formatCallMoment(call.completed_at ?? call.created_at)} ·{' '}
-            {formatCallDuration(call.duration_seconds)}
-          </p>
+            {call.lead.primary_h2 ? (
+              <p className="text-muted-foreground truncate text-sm">
+                {toDisplayStringOr(call.lead.primary_h2)}
+              </p>
+            ) : null}
+            <p className="text-muted-foreground mt-0.5 text-xs">
+              {formatCallMoment(call.completed_at ?? call.created_at)} ·{' '}
+              {formatCallDuration(call.duration_seconds)}
+            </p>
+          </div>
         </div>
-        <div className="flex flex-col items-end gap-2">
-          <Badge variant={call.status === 'FAILED' ? 'destructive' : 'outline'}>
+
+        <div className="flex items-center gap-3">
+          <Badge variant={failed ? 'destructive' : 'outline'}>
             {formatCallStatus(call.bolna_status ?? call.status)}
           </Badge>
+          {/* Stretched link: the whole row is the target, but only one anchor
+              exists, so the accessibility tree still sees a single control. */}
           <Link
             to={`/calls/${call.id}`}
-            className="text-primary text-sm underline underline-offset-4"
+            className="text-muted-foreground hover:text-foreground after:absolute after:inset-0 after:content-[''] focus-visible:outline-none"
             data-testid="view-call-details"
           >
-            View Details
+            <span className="sr-only">View Details</span>
+            <ChevronRight aria-hidden="true" className="size-5" />
           </Link>
         </div>
       </div>
@@ -60,14 +86,11 @@ export function CallsPage() {
   const calls = useVoiceCalls(workspaceId)
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold">Call details</h1>
-        <p className="text-muted-foreground text-sm">
-          Every call the AI agent has placed, newest first. Open one for its summary, transcript and
-          the provider's own record.
-        </p>
-      </div>
+    <div className="space-y-5">
+      <PageHeader
+        title="Call details"
+        description="Every call the AI agent has placed, newest first. Open one for its summary, transcript and the provider's own record."
+      />
 
       <Card>
         <CardHeader>

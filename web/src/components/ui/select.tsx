@@ -1,6 +1,7 @@
 import * as React from 'react'
 
 import { cn } from '@/lib/utils'
+import { fieldClasses } from '@/components/ui/input'
 
 /**
  * A native `<select>`, styled to match the rest of the kit.
@@ -13,12 +14,7 @@ function Select({ className, ...props }: React.ComponentProps<'select'>) {
   return (
     <select
       data-slot="select"
-      className={cn(
-        'border-input bg-background flex h-9 w-full rounded-md border px-3 py-1 text-sm shadow-xs transition-[color,box-shadow] outline-none',
-        'focus-visible:ring-ring/50 focus-visible:border-ring focus-visible:ring-[3px]',
-        'disabled:cursor-not-allowed disabled:opacity-50',
-        className,
-      )}
+      className={cn(fieldClasses, 'flex h-9.5 py-1 pr-9', className)}
       {...props}
     />
   )

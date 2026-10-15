@@ -147,7 +147,7 @@ export function PermissionsPage() {
     <div className="space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold">Permission templates</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Permission templates</h1>
           <p className="text-muted-foreground text-sm">
             Named permission sets, including the per-field View / Edit / Import / Export matrix.
           </p>
