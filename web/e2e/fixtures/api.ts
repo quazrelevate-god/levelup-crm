@@ -339,6 +339,16 @@ export const STAGES = {
       sort_order: 1,
       is_archived: false,
     },
+    // A second active stage, so the two AI-call outcomes have two stages to
+    // choose between — the mapping refuses one stage for both.
+    {
+      id: 'stage-5',
+      kind: 'ACTIVE',
+      label: 'Busy',
+      color: '#f59e0b',
+      sort_order: 2,
+      is_archived: false,
+    },
   ],
   won: {
     id: 'stage-3',
@@ -741,6 +751,11 @@ export interface StubOptions {
   readonly leads?: ReturnType<typeof lead>[]
   /** When false, custom-action endpoints answer 403 feature_disabled. */
   readonly customActionsEnabled?: boolean
+  /**
+   * Stage ids a finished AI call moves a lead to, as already configured.
+   * Omitted means unconfigured, which is how a real workspace starts.
+   */
+  readonly voiceOutcomeStages?: { readonly answered: string; readonly unanswered: string }
   /** The undo preview `preview-undo` returns — the conflict path needs one. */
   readonly undoPreview?: Record<string, unknown>
   /** When false, every task endpoint answers 403 insufficient_permissions. */
@@ -797,6 +812,8 @@ export interface StubHandle {
    * reaching into component state or showing the user JSON.
    */
   readonly lastSearch: () => LastSearch | null
+  /** The body of the last `PUT /settings/voice-outcome-stages`. */
+  readonly lastOutcomeStages: () => { answered: string; unanswered: string } | null
   readonly lastBulk: () => { lead_ids?: string[]; values?: Record<string, unknown> } | null
   readonly lastUndo: () => { skip_conflicts?: boolean } | null
   readonly lastMapping: () => {
@@ -1056,6 +1073,13 @@ export async function stubApi(page: Page, options: StubOptions = {}): Promise<St
   //: The last search body the page sent, so a spec can assert the *shape* of
   //: the filter the builder produced without reading the component's state.
   let lastSearchBody: LastSearch | null = null
+  //: Which stages a finished AI call moves a lead to. Held as state rather
+  //: than a fixed response so a spec can set it and then see the page read it
+  //: back — off by default, which is how a real workspace starts.
+  let outcomeStages: { answered: string; unanswered: string } | null =
+    options.voiceOutcomeStages ?? null
+  //: The body of the last PUT, so a spec can assert what the UI sent.
+  let lastOutcomeStages: { answered: string; unanswered: string } | null = null
   interface StubTask {
     id: string
     lead_id: string | null
@@ -1292,6 +1316,37 @@ export async function stubApi(page: Page, options: StubOptions = {}): Promise<St
     }
 
     // --- M3: pipeline and taxonomy ---------------------------------------
+    if (path.endsWith('/settings/voice-outcome-stages')) {
+      const everyStage = [STAGES.initial, ...STAGES.active, STAGES.won, STAGES.lost]
+      const resolve = (id: string | undefined) =>
+        everyStage.find((stage) => stage?.id === id) ?? null
+
+      if (method === 'GET') {
+        return json(route, 200, {
+          answered: resolve(outcomeStages?.answered),
+          unanswered: resolve(outcomeStages?.unanswered),
+        })
+      }
+      if (method === 'PUT') {
+        const body = route.request().postDataJSON() as { answered: string; unanswered: string }
+        lastOutcomeStages = body
+        // The real endpoint refuses one stage for both outcomes; the stub does
+        // too, so a spec can prove the UI never sends that pair.
+        if (body.answered === body.unanswered) {
+          return apiError(route, 422, 'stage_mapping_ambiguous')
+        }
+        outcomeStages = body
+        return json(route, 200, {
+          answered: resolve(body.answered),
+          unanswered: resolve(body.unanswered),
+        })
+      }
+      if (method === 'DELETE') {
+        outcomeStages = null
+        return route.fulfill({ status: 204, body: '' })
+      }
+    }
+
     if (path.endsWith('/settings/stages') && method === 'GET') {
       return json(route, 200, STAGES)
     }
@@ -2224,6 +2279,7 @@ export async function stubApi(page: Page, options: StubOptions = {}): Promise<St
     },
     refreshCount: () => refreshCount,
     lastSearch: () => lastSearchBody,
+    lastOutcomeStages: () => lastOutcomeStages,
     lastBulk: () => lastBulk as { lead_ids?: string[]; values?: Record<string, unknown> } | null,
     lastUndo: () => lastUndo as { skip_conflicts?: boolean } | null,
     lastMapping: () =>

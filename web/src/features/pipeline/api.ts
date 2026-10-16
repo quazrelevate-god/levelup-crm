@@ -22,6 +22,7 @@ const reasonsKey = (workspaceId: string) => ['lost-reasons', workspaceId] as con
 const dispositionsKey = (workspaceId: string) => ['dispositions', workspaceId] as const
 const actionsKey = (workspaceId: string) => ['custom-actions', workspaceId] as const
 const prefsKey = (workspaceId: string) => ['preferences', workspaceId] as const
+const outcomeStagesKey = (workspaceId: string) => ['voice-outcome-stages', workspaceId] as const
 
 function base(workspaceId: string): string {
   return `/workspaces/${workspaceId}/settings`
@@ -85,8 +86,11 @@ function useTaxonomyMutation<TVariables, TResult>(
       // Broad on purpose: turning a feature flag off changes what the custom
       // actions query is even allowed to return.
       await Promise.all(
-        [stagesKey, reasonsKey, dispositionsKey, actionsKey, prefsKey].map((key) =>
-          queryClient.invalidateQueries({ queryKey: key(workspaceId) }),
+        // `outcomeStagesKey` is in the list because archiving a stage can
+        // empty the mapping that names it, and the mapping is read back
+        // resolved to stage rows — so a stage rename changes what it shows.
+        [stagesKey, reasonsKey, dispositionsKey, actionsKey, prefsKey, outcomeStagesKey].map(
+          (key) => queryClient.invalidateQueries({ queryKey: key(workspaceId) }),
         ),
       )
     },
@@ -231,5 +235,39 @@ export function useAddActionField(workspaceId: string) {
 export function useUpdatePreferences(workspaceId: string) {
   return useTaxonomyMutation(workspaceId, (body: Partial<WorkspacePreferences>) =>
     api.patch<WorkspacePreferences>(`${base(workspaceId)}/preferences`, body),
+  )
+}
+
+// --- which stages a finished AI call moves a lead to --------------------------
+
+/**
+ * The pair an admin configures, read back in full so the UI can name the
+ * stages rather than show two ids. Null for either when nothing is set, which
+ * is every workspace until someone configures it — and an unset mapping means
+ * a finished call moves no lead, which is the safe default.
+ */
+export interface VoiceOutcomeStages {
+  readonly answered: Stage | null
+  readonly unanswered: Stage | null
+}
+
+export function useVoiceOutcomeStages(workspaceId: string) {
+  return useQuery({
+    queryKey: outcomeStagesKey(workspaceId),
+    queryFn: () => api.get<VoiceOutcomeStages>(`${base(workspaceId)}/voice-outcome-stages`),
+  })
+}
+
+export function useSetVoiceOutcomeStages(workspaceId: string) {
+  return useTaxonomyMutation(
+    workspaceId,
+    (body: { readonly answered: string; readonly unanswered: string }) =>
+      api.put<VoiceOutcomeStages>(`${base(workspaceId)}/voice-outcome-stages`, body),
+  )
+}
+
+export function useClearVoiceOutcomeStages(workspaceId: string) {
+  return useTaxonomyMutation(workspaceId, () =>
+    api.delete<void>(`${base(workspaceId)}/voice-outcome-stages`),
   )
 }

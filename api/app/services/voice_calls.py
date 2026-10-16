@@ -55,10 +55,10 @@ from typing import Any
 from app.errors import api_error, not_found
 from app.fields.rendering import render_for_voice
 from app.integrations.bolna import BolnaCallRequest, BolnaClient, BolnaSettings
-from app.models.enums import ChangesetSource, VoiceCallStatus
+from app.models.enums import ChangesetSource, StageKind, SystemActionKind, VoiceCallStatus
 from app.models.field import FieldOption, LeadField
 from app.models.lead import Action, Lead
-from app.models.pipeline import CallDisposition
+from app.models.pipeline import CallDisposition, Stage
 from app.models.voice import VoiceCallExecution
 from app.models.workspace import Workspace
 from app.schemas.voice import VoiceExecutionWebhook
@@ -86,6 +86,7 @@ from app.services.voice_postcall import (
     normalise_execution,
     summarize_call,
 )
+from app.services.voice_settings import VOICE_OUTCOME_STAGES, read_outcome_stages
 from app.tenancy.session import ScopedSession
 
 logger = logging.getLogger(__name__)
@@ -741,6 +742,155 @@ class VoiceCallService:
         )
         return rows.scalar_one_or_none() is None
 
+    # --- the stage a finished call implies ----------------------------------
+
+    def _outcome_stage_ids(self) -> tuple[uuid.UUID | None, uuid.UUID | None]:
+        """`(answered, unanswered)` for this workspace, or `(None, None)`.
+
+        The namespace and its tolerance live in `app.services.voice_settings`,
+        shared with the endpoint that writes it.
+        """
+        return read_outcome_stages(self._workspace.settings)
+
+    def _outcome_target(
+        self, call: NormalizedCallResult, answered: uuid.UUID | None, unanswered: uuid.UUID | None
+    ) -> uuid.UUID | None:
+        """Which configured stage this result justifies, or `None` for neither.
+
+        Both arms demand positive evidence, and a result that supplies neither
+        moves nothing:
+
+        - **answered** needs `succeeded` *and* `had_conversation`. A vendor
+          `completed` with no transcript and no talk time is an accepted API
+          response, not proof that anybody spoke.
+        - **unanswered** needs `failed` — a status Bolna lists as a real
+          failure: busy, no-answer, a disconnect with nothing said, an
+          unreachable or switched-off number. Not merely "did not succeed".
+
+        The gap between them is deliberate. `terminal` is also true when a
+        payload simply carries a summary under a status this release has never
+        seen, and a processing problem on our side is not evidence that the
+        caller could not be reached. Those move nothing and say why.
+        """
+        if call.succeeded and call.had_conversation:
+            return answered
+        if call.failed:
+            return unanswered
+        logger.info(
+            "voice.stage no stage change: status=%s succeeded=%s conversation=%s failed=%s",
+            call.status or "-",
+            call.succeeded,
+            call.had_conversation,
+            call.failed,
+        )
+        return None
+
+    async def _last_stage_change(self, lead: Lead) -> Action | None:
+        rows = await self._session.execute(
+            self._session.select(Action)
+            .where(Action.lead_id == lead.id, Action.kind == SystemActionKind.STAGE_CHANGE)
+            .order_by(Action.created_at.desc(), Action.id.desc())
+            .limit(1)
+        )
+        action: Action | None = rows.scalar_one_or_none()
+        return action
+
+    async def _move_stage_for_outcome(
+        self, lead: Lead, call: NormalizedCallResult, *, correcting: bool = False
+    ) -> uuid.UUID | None:
+        """Move the lead to the stage this call's outcome implies, or do nothing.
+
+        Two cases move a lead, and nothing else does:
+
+        **The lead is still in the workspace's initial stage.** A finished call
+        is the first real contact, so it belongs in the configured answered or
+        unanswered stage. Keyed on `StageKind.INITIAL` rather than a label,
+        because the label is the customer's.
+
+        **A delayed delivery overturns this automation's own earlier verdict.**
+        Bolna sends the hangup first and the completed result seconds later;
+        the first can look unanswered while the second proves a conversation
+        happened. The correction is allowed only when the lead's *most recent*
+        stage change is this automation's own move into the unanswered stage —
+        webhook writes carry no actor, a person's edit does. So a lead someone
+        has since touched by hand, in either direction, is left alone.
+
+        A lead in any other stage — the answered stage, won, lost, or any other
+        active stage the workspace has — is never touched.
+
+        Reuses `LeadService._apply_update`, so the stage change is validated,
+        archived stages are refused, and a `STAGE_CHANGE` action carrying the
+        old and new ids is written (architecture rules 5, 5a and 5b) exactly as
+        a human edit would.
+        """
+        answered, unanswered = self._outcome_stage_ids()
+        if answered is not None and answered == unanswered:
+            logger.warning(
+                "voice.stage %s maps answered and unanswered to the same stage %s; "
+                "ambiguous, lead %s not moved",
+                VOICE_OUTCOME_STAGES,
+                answered,
+                lead.id,
+            )
+            return None
+
+        target = self._outcome_target(call, answered, unanswered)
+        if target is None or target == lead.stage_id:
+            return None
+
+        current = await self._session.get(Stage, lead.stage_id) if lead.stage_id else None
+        from_initial = current is not None and current.kind == StageKind.INITIAL
+        correction = False
+        if correcting and not from_initial and unanswered is not None:
+            last = await self._last_stage_change(lead)
+            correction = (
+                lead.stage_id == unanswered
+                and last is not None
+                and last.actor_id is None
+                and (last.payload or {}).get("new_stage_id") == str(unanswered)
+            )
+        if not (from_initial or correction):
+            return None
+
+        # `ScopedSession.get` is workspace-scoped, so another workspace's id
+        # reads as absent. An archived target is refused by `_apply_update`,
+        # but it is caught here too so the webhook logs why nothing moved.
+        destination = await self._session.get(Stage, target)
+        if destination is None or destination.is_archived:
+            logger.warning(
+                "voice.stage configured stage %s is missing or archived; lead %s not moved",
+                target,
+                lead.id,
+            )
+            return None
+        if destination.kind != StageKind.ACTIVE:
+            # The three singleton kinds are the pipeline's own ends. Moving a
+            # lead into won, lost or back to the initial stage is a decision
+            # about the deal, not a record of a phone call.
+            logger.warning(
+                "voice.stage configured stage %s is %s, not ACTIVE; lead %s not moved",
+                target,
+                destination.kind,
+                lead.id,
+            )
+            return None
+
+        writer = ActionWriter(self._session, actor_id=self._actor_id)
+        await writer.open_changeset(
+            source=ChangesetSource.AUTOMATION,
+            summary=f"AI call outcome moved {lead.identity_value} to {destination.label}",
+            lead_count=1,
+        )
+        await self._leads._apply_update(lead, writer, stage_id=target)
+        await self._session.flush()
+        logger.info(
+            "voice.stage lead=%s -> stage=%s (%s)",
+            lead.id,
+            target,
+            "corrected" if correction else "first outcome",
+        )
+        return target
+
     async def _upgrade(
         self,
         payload: VoiceExecutionWebhook,
@@ -828,6 +978,12 @@ class VoiceCallService:
                 summary_disposition=(self._config.summary_disposition if self._config else None),
             )
             extraction = await extractor.apply(payload, lead, extraction_writer)
+
+        # The richer delivery can overturn the first verdict: a hangup with no
+        # transcript reads as unanswered, and the completed result seconds
+        # later proves there was a conversation. `correcting=True` lets that
+        # one case move the lead out of the unanswered stage.
+        await self._move_stage_for_outcome(lead, call, correcting=True)
 
         # When the authoritative result arrived.
         row.completed_at = now
@@ -991,6 +1147,10 @@ class VoiceCallService:
                 summary_disposition=(self._config.summary_disposition if self._config else None),
             )
             extraction = await extractor.apply(payload, lead, extraction_writer)
+
+        # The stage the outcome implies, in its own AUTOMATION changeset so an
+        # operator can undo the move without undoing the call log.
+        await self._move_stage_for_outcome(lead, call)
 
         row.completed_at = now
         row.status = VoiceCallStatus.FAILED if call.failed else VoiceCallStatus.COMPLETED

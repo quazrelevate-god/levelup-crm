@@ -36,6 +36,8 @@ from app.schemas.pipeline import (
     StageRead,
     StageReorder,
     StageUpdate,
+    VoiceOutcomeStagesRead,
+    VoiceOutcomeStagesUpdate,
     WorkspacePreferencesRead,
     WorkspacePreferencesUpdate,
 )
@@ -106,6 +108,63 @@ async def create_stage(
     stage = await service.create_stage(label=payload.label, color=payload.color)
     await scope.session.commit()
     return StageRead.model_validate(stage)
+
+
+@router.get(
+    "/voice-outcome-stages",
+    response_model=VoiceOutcomeStagesRead,
+    summary="Which stages a finished AI call moves a lead to",
+)
+async def read_voice_outcome_stages(
+    scope: Annotated[WorkspaceScope, Depends(require_workspace)],
+    service: Annotated[PipelineService, Depends(_pipeline)],
+) -> VoiceOutcomeStagesRead:
+    """Null for both when nothing is configured, which is the default."""
+    answered, unanswered = await service.voice_outcome_stages(scope.workspace)
+    return VoiceOutcomeStagesRead(
+        answered=StageRead.model_validate(answered) if answered else None,
+        unanswered=StageRead.model_validate(unanswered) if unanswered else None,
+    )
+
+
+@router.put(
+    "/voice-outcome-stages",
+    response_model=VoiceOutcomeStagesRead,
+    summary="Set the two stages a finished AI call moves a lead to",
+)
+async def set_voice_outcome_stages(
+    payload: VoiceOutcomeStagesUpdate,
+    scope: Annotated[WorkspaceScope, Depends(require_workspace_admin)],
+    service: Annotated[PipelineService, Depends(_pipeline_admin)],
+) -> VoiceOutcomeStagesRead:
+    """Admin only, like every other pipeline write.
+
+    A deliberately narrow door onto `workspace.settings`: two stage ids and
+    nothing else, both validated against this workspace's live active stages,
+    with every other setting preserved. The alternative — exposing the whole
+    settings object — would accept anything and validate none of it.
+    """
+    answered, unanswered = await service.set_voice_outcome_stages(
+        scope.workspace, answered=payload.answered, unanswered=payload.unanswered
+    )
+    await scope.session.commit()
+    return VoiceOutcomeStagesRead(
+        answered=StageRead.model_validate(answered),
+        unanswered=StageRead.model_validate(unanswered),
+    )
+
+
+@router.delete(
+    "/voice-outcome-stages",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Stop moving leads on an AI call outcome",
+)
+async def clear_voice_outcome_stages(
+    scope: Annotated[WorkspaceScope, Depends(require_workspace_admin)],
+    service: Annotated[PipelineService, Depends(_pipeline_admin)],
+) -> None:
+    await service.clear_voice_outcome_stages(scope.workspace)
+    await scope.session.commit()
 
 
 @router.patch("/stages/reorder", response_model=list[StageRead], summary="Reorder active stages")

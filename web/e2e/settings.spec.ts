@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 
-import { leadField, stubApi, type StubOptions } from './fixtures/api'
+import { STAGES, leadField, membershipSummary, stubApi, type StubOptions } from './fixtures/api'
 
 /**
  * The M2-M4 settings surface.
@@ -126,10 +126,12 @@ test.describe('pipeline settings (M3)', () => {
     await page.goto('/settings/pipeline')
     await expect(page.getByRole('heading', { name: 'Pipeline and taxonomy' })).toBeVisible()
 
-    await expect(page.getByText('Initial stage')).toBeVisible()
-    await expect(page.getByText('Closed stages')).toBeVisible()
-    // One initial, one active, one won, one lost.
-    await expect(page.getByTestId('stage-chip')).toHaveCount(4)
+    // The column headings, by role: the AI-call card below also has the words
+    // "initial stage" in its prose, and a bare text match catches both.
+    await expect(page.getByRole('heading', { name: 'Initial stage' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Closed stages' })).toBeVisible()
+    // One initial, two active, one won, one lost.
+    await expect(page.getByTestId('stage-chip')).toHaveCount(5)
     await expect(page.getByText('One won, one lost')).toBeVisible()
   })
 
@@ -249,5 +251,79 @@ test.describe('the settings door', () => {
     await signIn(page)
     await page.goto('/status')
     await expect(page).toHaveURL(/\/settings\/system$/)
+  })
+})
+
+test.describe('what a finished AI call does to a lead', () => {
+  test('it is off until an admin names two stages, and names neither itself', async ({ page }) => {
+    await signIn(page)
+    await page.goto('/settings/pipeline')
+
+    const card = page.getByTestId('voice-outcome-stages')
+    await expect(card.getByText('Off', { exact: true })).toBeVisible()
+    await expect(card.getByText('a finished call logs the call and moves no lead')).toBeVisible()
+
+    // Both pickers offer this workspace's active stages and nothing else:
+    // the initial stage, won and lost are the pipeline's own ends, and the
+    // placeholder is the third option. Nothing in the frontend decides that
+    // an answered call means "Contacted" — the admin does.
+    const answered = page.getByLabel('Answered, and they spoke')
+    await expect(answered.locator('option')).toHaveCount(STAGES.active.length + 1)
+    await expect(answered.locator('option', { hasText: 'New' })).toHaveCount(0)
+    await expect(answered.locator('option', { hasText: 'Won' })).toHaveCount(0)
+    await expect(answered.locator('option', { hasText: 'Lost' })).toHaveCount(0)
+  })
+
+  test('the pair saves together and reads back by name', async ({ page }) => {
+    const stub = await signIn(page)
+    await page.goto('/settings/pipeline')
+
+    await page.getByLabel('Answered, and they spoke').selectOption({ label: 'Contacted' })
+    await page.getByLabel('Not answered, busy or unreachable').selectOption({ label: 'Busy' })
+    await page.getByRole('button', { name: 'Turn on' }).click()
+
+    // Stage ids on the wire, labels on the screen.
+    await expect
+      .poll(() => stub.lastOutcomeStages())
+      .toEqual({ answered: 'stage-2', unanswered: 'stage-5' })
+    const card = page.getByTestId('voice-outcome-stages')
+    await expect(card.getByText('On', { exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Turn off' })).toBeVisible()
+  })
+
+  test('one stage for both outcomes is refused before it is sent', async ({ page }) => {
+    const stub = await signIn(page)
+    await page.goto('/settings/pipeline')
+
+    await page.getByLabel('Answered, and they spoke').selectOption({ label: 'Contacted' })
+    await page.getByLabel('Not answered, busy or unreachable').selectOption({ label: 'Contacted' })
+
+    await expect(page.getByText('The two outcomes need two different stages.')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Turn on' })).toBeDisabled()
+    // Never reached the API: a mapping the backend would reject with a 422 is
+    // not worth a round trip, and the message arrives as the admin types.
+    expect(stub.lastOutcomeStages()).toBeNull()
+  })
+
+  test('an already-configured workspace shows its own stages, and can turn it off', async ({
+    page,
+  }) => {
+    await signIn(page, { voiceOutcomeStages: { answered: 'stage-2', unanswered: 'stage-5' } })
+    await page.goto('/settings/pipeline')
+
+    await expect(page.getByLabel('Answered, and they spoke')).toHaveValue('stage-2')
+    await expect(page.getByLabel('Not answered, busy or unreachable')).toHaveValue('stage-5')
+
+    await page.getByRole('button', { name: 'Turn off' }).click()
+    const card = page.getByTestId('voice-outcome-stages')
+    await expect(card.getByText('Off', { exact: true })).toBeVisible()
+  })
+
+  test('a rep sees the mapping but cannot change it', async ({ page }) => {
+    await signIn(page, { memberships: [membershipSummary({ template_name: 'Caller' })] })
+    await page.goto('/settings/pipeline')
+
+    await expect(page.getByLabel('Answered, and they spoke')).toBeDisabled()
+    await expect(page.getByRole('button', { name: 'Turn on' })).toBeDisabled()
   })
 })

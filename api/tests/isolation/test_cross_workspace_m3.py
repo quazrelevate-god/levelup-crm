@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import pytest
 from httpx import AsyncClient
+from tests.factories import WorkspaceFixture
 from tests.isolation.conftest import TenantPair
 from tests.isolation.test_cross_workspace import (
     _M3_BODIES,
@@ -88,6 +89,12 @@ async def test_taxonomy_writes_under_a_foreign_workspace_path_return_404(
         "/settings/call-dispositions": {"label": "Smuggled"},
         "/settings/preferences": {"currency": "EUR"},
         "/settings/custom-actions": {"name": "Smuggled"},
+        # Shaped so the request fails on the workspace boundary rather than on
+        # validation: the ids are syntactically valid and belong to nobody.
+        "/settings/voice-outcome-stages": {
+            "answered": "11111111-1111-1111-1111-111111111111",
+            "unanswered": "22222222-2222-2222-2222-222222222222",
+        },
     }
     response = await api.request(
         method, tenants.b.path(route), headers=tenants.a.owner.auth, json=bodies[route]
@@ -146,3 +153,110 @@ async def test_a_disabled_feature_is_still_404_not_403_across_a_boundary(
     assert response.status_code == 404, (
         "a non-member learned this workspace's feature configuration"
     )
+
+
+async def _configure_outcome_stages(
+    api: AsyncClient, workspace: WorkspaceFixture
+) -> dict[str, str]:
+    """Give one workspace a voice-outcome mapping, through its own admin.
+
+    The provisioned pipeline has a single active stage, so a second is created
+    — the endpoint refuses one stage for both outcomes.
+    """
+    pipeline = (
+        await api.get(workspace.path("/settings/stages"), headers=workspace.owner.auth)
+    ).json()
+    answered = str(pipeline["active"][0]["id"])
+    created = await api.post(
+        workspace.path("/settings/stages"), headers=workspace.owner.auth, json={"label": "Busy"}
+    )
+    assert created.status_code == 201, created.text
+    unanswered = str(created.json()["id"])
+
+    stored = await api.put(
+        workspace.path("/settings/voice-outcome-stages"),
+        headers=workspace.owner.auth,
+        json={"answered": answered, "unanswered": unanswered},
+    )
+    assert stored.status_code == 200, stored.text
+    return {"answered": answered, "unanswered": unanswered}
+
+
+async def test_the_voice_outcome_mapping_is_never_visible_across_a_boundary(
+    api: AsyncClient, tenants: TenantPair
+) -> None:
+    """B configures which stages its AI calls move leads to; A must not see it.
+
+    The parametrised collection probe only checks that B's *workspace* id is
+    absent. This one puts real B stage ids behind the setting first, so a leak
+    would be caught by id rather than by shape.
+    """
+    theirs = await _configure_outcome_stages(api, tenants.b)
+
+    own = await api.get(
+        tenants.a.path("/settings/voice-outcome-stages"), headers=tenants.a.owner.auth
+    )
+    assert own.status_code == 200, own.text
+    assert own.json() == {"answered": None, "unanswered": None}
+    for stage_id in theirs.values():
+        assert stage_id not in own.text
+
+    foreign = await api.get(
+        tenants.b.path("/settings/voice-outcome-stages"), headers=tenants.a.owner.auth
+    )
+    assert foreign.status_code == 404, foreign.text
+
+
+async def test_the_voice_outcome_mapping_cannot_be_configured_across_a_boundary(
+    api: AsyncClient, tenants: TenantPair
+) -> None:
+    """A's admin cannot set or clear B's mapping, even with B's genuine ids."""
+    theirs = await _configure_outcome_stages(api, tenants.b)
+
+    written = await api.put(
+        tenants.b.path("/settings/voice-outcome-stages"),
+        headers=tenants.a.owner.auth,
+        json={"answered": theirs["unanswered"], "unanswered": theirs["answered"]},
+    )
+    assert written.status_code == 404, written.text
+
+    cleared = await api.delete(
+        tenants.b.path("/settings/voice-outcome-stages"), headers=tenants.a.owner.auth
+    )
+    assert cleared.status_code == 404, cleared.text
+
+    # B's own mapping is exactly as B left it.
+    still = await api.get(
+        tenants.b.path("/settings/voice-outcome-stages"), headers=tenants.b.owner.auth
+    )
+    assert still.status_code == 200, still.text
+    assert still.json()["answered"]["id"] == theirs["answered"]
+    assert still.json()["unanswered"]["id"] == theirs["unanswered"]
+
+
+async def test_another_workspaces_stage_cannot_be_mapped(
+    api: AsyncClient, tenants: TenantPair
+) -> None:
+    """A cannot point its own mapping at one of B's stages.
+
+    The id is real, so this is the case a scoping mistake would let through,
+    and it must read as absent rather than as a permission problem.
+    """
+    foreign_stage = await _foreign_taxonomy_id(api, tenants, "stage")
+    mine = (await api.get(tenants.a.path("/settings/stages"), headers=tenants.a.owner.auth)).json()[
+        "active"
+    ][0]["id"]
+
+    response = await api.put(
+        tenants.a.path("/settings/voice-outcome-stages"),
+        headers=tenants.a.owner.auth,
+        json={"answered": str(mine), "unanswered": foreign_stage},
+    )
+    assert response.status_code == 404, response.text
+    assert response.json()["detail"]["code"] == "not_found"
+
+    # And nothing was stored on the way to refusing it.
+    after = await api.get(
+        tenants.a.path("/settings/voice-outcome-stages"), headers=tenants.a.owner.auth
+    )
+    assert after.json() == {"answered": None, "unanswered": None}

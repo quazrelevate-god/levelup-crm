@@ -18,12 +18,14 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select } from '@/components/ui/select'
 import { useAuth } from '@/features/auth/context'
 import { usePermissions } from '@/features/auth/usePermissions'
 import {
   useArchiveDisposition,
   useArchiveLostReason,
   useArchiveStage,
+  useClearVoiceOutcomeStages,
   useCreateDisposition,
   useCreateLostReason,
   useCreateStage,
@@ -32,11 +34,13 @@ import {
   usePreferences,
   useReorderStages,
   useSetDefaultDisposition,
+  useSetVoiceOutcomeStages,
   useStages,
   useUpdateDisposition,
   useUpdateLostReason,
   useUpdatePreferences,
   useUpdateStage,
+  useVoiceOutcomeStages,
 } from '@/features/pipeline/api'
 
 const ACTION_MESSAGES: Record<string, string> = {
@@ -45,6 +49,9 @@ const ACTION_MESSAGES: Record<string, string> = {
   system_disposition: 'System statuses cannot be renamed. Archive it instead.',
   default_disposition: 'Make another status the default before archiving this one.',
   stage_not_reorderable: 'Only the active stages can be reordered.',
+  stage_mapping_ambiguous: 'The two call outcomes need two different stages.',
+  stage_archived: 'That stage is archived. Choose a live stage.',
+  stage_kind_not_active: 'Only an active stage can be used for a call outcome.',
   unknown_timezone: 'That is not an IANA timezone, e.g. Europe/London.',
   unknown_feature: 'This product has no such feature flag.',
   insufficient_permissions: 'Your permission template does not allow changing settings.',
@@ -87,6 +94,169 @@ function StageChip({
         }}
       />
     </div>
+  )
+}
+
+/**
+ * Which stage a finished AI call moves a lead to.
+ *
+ * Two pickers rather than free text, drawn from this workspace's own active
+ * stages, because the API stores stage ids and refuses anything that is not a
+ * live active stage. Neither outcome is named in this file: "Contacted" and
+ * "Busy" are one customer's words, and the next customer's are their own.
+ *
+ * The pair saves together. A half-set mapping would move one outcome and
+ * silently drop the other, which reads as a bug rather than as a choice, so
+ * the API requires both and so does the button.
+ */
+function VoiceOutcomeStagesCard({
+  workspaceId,
+  isAdmin,
+  initial,
+  active,
+  stagesLoaded,
+  run,
+}: {
+  workspaceId: string
+  isAdmin: boolean
+  initial: Stage | null
+  active: readonly Stage[]
+  /**
+   * Whether the pipeline has actually been fetched. Without it the card
+   * cannot tell "this workspace has no active stage" from "the stages have
+   * not arrived yet", and flashes the first as advice during every load.
+   */
+  stagesLoaded: boolean
+  run: (work: Promise<unknown>) => Promise<void>
+}) {
+  const configured = useVoiceOutcomeStages(workspaceId)
+  const save = useSetVoiceOutcomeStages(workspaceId)
+  const clear = useClearVoiceOutcomeStages(workspaceId)
+
+  const saved = configured.data
+  // `undefined` means "not edited yet", so the selects follow the server until
+  // someone touches them and are not reset by a refetch mid-edit.
+  const [answered, setAnswered] = useState<string | undefined>()
+  const [unanswered, setUnanswered] = useState<string | undefined>()
+
+  const answeredValue = answered ?? saved?.answered?.id ?? ''
+  const unansweredValue = unanswered ?? saved?.unanswered?.id ?? ''
+  const complete = answeredValue !== '' && unansweredValue !== ''
+  const distinct = answeredValue !== unansweredValue
+  const dirty =
+    answeredValue !== (saved?.answered?.id ?? '') ||
+    unansweredValue !== (saved?.unanswered?.id ?? '')
+  const isOn = Boolean(saved?.answered && saved?.unanswered)
+
+  const options = (
+    <>
+      <option value="">Choose a stage…</option>
+      {active.map((stage) => (
+        <option key={stage.id} value={stage.id}>
+          {stage.label}
+        </option>
+      ))}
+    </>
+  )
+
+  return (
+    <Card data-testid="voice-outcome-stages">
+      <CardHeader>
+        <CardTitle className="text-base">
+          After an AI call{' '}
+          <Badge variant={isOn ? 'default' : 'secondary'}>{isOn ? 'On' : 'Off'}</Badge>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-muted-foreground text-sm">
+          When an AI call finishes, move the lead to one of these stages — one for a call that was
+          answered and a conversation happened, one for a call that was not answered. This only
+          moves a lead that is still in the{' '}
+          {initial ? <span className="font-medium">{initial.label}</span> : 'initial'} stage, so a
+          lead you have already worked is never moved under you.
+        </p>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="outcome-answered">Answered, and they spoke</Label>
+            <Select
+              id="outcome-answered"
+              value={answeredValue}
+              disabled={!isAdmin || active.length === 0}
+              onChange={(event) => setAnswered(event.target.value)}
+            >
+              {options}
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="outcome-unanswered">Not answered, busy or unreachable</Label>
+            <Select
+              id="outcome-unanswered"
+              value={unansweredValue}
+              disabled={!isAdmin || active.length === 0}
+              onChange={(event) => setUnanswered(event.target.value)}
+            >
+              {options}
+            </Select>
+          </div>
+        </div>
+
+        {complete && !distinct ? (
+          <p role="alert" className="text-destructive text-sm">
+            The two outcomes need two different stages.
+          </p>
+        ) : null}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            disabled={!isAdmin || !complete || !distinct || !dirty || save.isPending}
+            onClick={() =>
+              void run(
+                save
+                  .mutateAsync({ answered: answeredValue, unanswered: unansweredValue })
+                  .then(() => {
+                    setAnswered(undefined)
+                    setUnanswered(undefined)
+                  }),
+              )
+            }
+          >
+            {isOn ? 'Update' : 'Turn on'}
+          </Button>
+          {isOn ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={!isAdmin || clear.isPending}
+              onClick={() =>
+                void run(
+                  clear.mutateAsync(undefined).then(() => {
+                    setAnswered(undefined)
+                    setUnanswered(undefined)
+                  }),
+                )
+              }
+            >
+              Turn off
+            </Button>
+          ) : null}
+          {!isOn && !dirty ? (
+            <span className="text-muted-foreground text-xs">
+              Off — a finished call logs the call and moves no lead.
+            </span>
+          ) : null}
+        </div>
+
+        {stagesLoaded && active.length === 0 ? (
+          <p className="text-muted-foreground text-xs">
+            Add an active stage above first — won, lost and the initial stage cannot be used here,
+            because moving a lead into them is a decision about the deal rather than a record of a
+            phone call.
+          </p>
+        ) : null}
+      </CardContent>
+    </Card>
   )
 }
 
@@ -320,6 +490,15 @@ export function PipelineSettingsPage() {
           ) : null}
         </CardContent>
       </Card>
+
+      <VoiceOutcomeStagesCard
+        workspaceId={workspaceId}
+        isAdmin={isAdmin}
+        initial={pipeline?.initial ?? null}
+        active={active}
+        stagesLoaded={stages.isSuccess}
+        run={run}
+      />
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>

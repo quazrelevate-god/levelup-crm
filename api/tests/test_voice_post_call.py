@@ -28,8 +28,9 @@ from tests.factories import WorkspaceFixture, build_workspace, login
 
 from app.auth.passwords import PasswordHasherService
 from app.integrations.bolna import BolnaSettings, RecordingBolnaClient
-from app.models.enums import SystemActionKind, VoiceCallStatus
+from app.models.enums import StageKind, SystemActionKind, VoiceCallStatus
 from app.models.lead import Action, Lead
+from app.models.pipeline import Stage
 from app.models.voice import VoiceCallExecution
 from app.observability import redact_path
 from app.services.voice_postcall import (
@@ -42,6 +43,7 @@ from app.services.voice_postcall import (
     normalise_execution,
     summarize_call,
 )
+from app.services.voice_settings import VOICE_OUTCOME_STAGES
 
 FAKE_BOLNA_KEY = "bn-test-key-do-not-use-0000000000"
 FAKE_AGENT_ID = "11111111-2222-3333-4444-555555555555"
@@ -782,3 +784,544 @@ async def test_summarize_caps_a_runaway_summary() -> None:
     result = await summarize_call(call, VendorCallSummarizer())
     assert len(result.text) <= 1_500
     assert result.text.endswith(".")
+
+
+# --- the stage a finished call implies ----------------------------------------
+#
+# A workspace names its own stages, so the product cannot know which one means
+# "we spoke to them". It is told: two stage ids in `workspace.settings`. Absent
+# means the behaviour is off, which is what every existing workspace gets.
+#
+# The move only ever happens from the workspace's INITIAL stage, so a lead an
+# operator has already worked is never dragged backwards — with one deliberate
+# exception, the delayed delivery that overturns its own earlier verdict.
+
+
+async def _stage_by_kind(session: AsyncSession, ws: WorkspaceFixture, kind: StageKind) -> Stage:
+    rows = await session.execute(
+        select(Stage).where(Stage.workspace_id == ws.id, Stage.kind == kind)
+    )
+    return rows.scalars().one()
+
+
+async def _add_active_stage(api: AsyncClient, ws: WorkspaceFixture, label: str) -> str:
+    """Through the admin endpoint, because only ACTIVE stages can be created."""
+    response = await api.post(
+        ws.path("/settings/stages"), headers=ws.owner.auth, json={"label": label}
+    )
+    assert response.status_code == 201, response.text
+    return str(response.json()["id"])
+
+
+async def _configure(
+    session: AsyncSession,
+    ws: WorkspaceFixture,
+    *,
+    answered: str | None,
+    unanswered: str | None,
+) -> None:
+    mapping: dict[str, str] = {}
+    if answered:
+        mapping["answered"] = answered
+    if unanswered:
+        mapping["unanswered"] = unanswered
+    ws.workspace.settings = {**(ws.workspace.settings or {}), VOICE_OUTCOME_STAGES: mapping}
+    await session.commit()
+
+
+async def _lead_stage(session: AsyncSession, lead_id: str) -> uuid.UUID | None:
+    rows = await session.execute(select(Lead).where(Lead.id == uuid.UUID(lead_id)))
+    return rows.scalars().one().stage_id
+
+
+async def _set_stage(session: AsyncSession, lead_id: str, stage_id: str) -> None:
+    rows = await session.execute(select(Lead).where(Lead.id == uuid.UUID(lead_id)))
+    lead = rows.scalars().one()
+    lead.stage_id = uuid.UUID(stage_id)
+    await session.commit()
+
+
+async def _stage_changes(session: AsyncSession, ws: WorkspaceFixture) -> list[Action]:
+    rows = await session.execute(
+        select(Action)
+        .where(Action.workspace_id == ws.id, Action.kind == SystemActionKind.STAGE_CHANGE)
+        .order_by(Action.created_at)
+    )
+    return list(rows.scalars().all())
+
+
+@pytest.fixture
+async def outcome_stages(
+    api: AsyncClient, db_session: AsyncSession, ws: WorkspaceFixture
+) -> dict[str, str]:
+    """The stages these tests need, with the mapping configured.
+
+    The provisioned set has one ACTIVE stage; the unanswered one does not exist
+    and is created the way an admin would — which is also the proof that the
+    product needs no such stage to exist by default.
+    """
+    await login(api, ws.owner)
+    initial = await _stage_by_kind(db_session, ws, StageKind.INITIAL)
+    rows = await db_session.execute(
+        select(Stage).where(Stage.workspace_id == ws.id, Stage.kind == StageKind.ACTIVE)
+    )
+    answered = rows.scalars().first()
+    assert answered is not None, "the provisioned set should contain one ACTIVE stage"
+    unanswered = await _add_active_stage(api, ws, "Busy")
+    await _configure(db_session, ws, answered=str(answered.id), unanswered=unanswered)
+    return {
+        "initial": str(initial.id),
+        "answered": str(answered.id),
+        "unanswered": unanswered,
+        "won": str((await _stage_by_kind(db_session, ws, StageKind.WON)).id),
+        "lost": str((await _stage_by_kind(db_session, ws, StageKind.LOST)).id),
+    }
+
+
+@pytest.mark.integration
+async def test_a_new_lead_that_answered_moves_to_the_answered_stage(
+    api: AsyncClient,
+    db_session: AsyncSession,
+    ws: WorkspaceFixture,
+    bolna: RecordingBolnaClient,
+    outcome_stages: dict[str, str],
+) -> None:
+    key = await _setup(api, ws)
+    lead = await _lead(api, ws)
+    assert str(await _lead_stage(db_session, lead["id"])) == outcome_stages["initial"]
+
+    execution_id = await _trigger(api, ws, lead["id"])
+    # Triggering alone must not move it.
+    assert str(await _lead_stage(db_session, lead["id"])) == outcome_stages["initial"]
+
+    response = await _post(api, key, _bolna_body(execution_id, status="completed"))
+    assert response.status_code == 200, response.text
+    assert str(await _lead_stage(db_session, lead["id"])) == outcome_stages["answered"]
+
+    # One STAGE_CHANGE, carrying the old and new ids (rule 5b).
+    changes = await _stage_changes(db_session, ws)
+    assert len(changes) == 1
+    payload = changes[0].payload
+    assert payload["old_stage_id"] == outcome_stages["initial"]
+    assert payload["new_stage_id"] == outcome_stages["answered"]
+
+
+@pytest.mark.integration
+async def test_a_new_lead_that_did_not_answer_moves_to_the_unanswered_stage(
+    api: AsyncClient,
+    db_session: AsyncSession,
+    ws: WorkspaceFixture,
+    bolna: RecordingBolnaClient,
+    outcome_stages: dict[str, str],
+) -> None:
+    key = await _setup(api, ws)
+    lead = await _lead(api, ws)
+    execution_id = await _trigger(api, ws, lead["id"])
+
+    response = await _post(
+        api,
+        key,
+        _bolna_body(execution_id, status="no-answer", summary=None, transcript=None, duration=0),
+    )
+    assert response.status_code == 200, response.text
+    assert str(await _lead_stage(db_session, lead["id"])) == outcome_stages["unanswered"]
+
+
+@pytest.mark.integration
+async def test_a_busy_status_is_also_unanswered(
+    api: AsyncClient,
+    db_session: AsyncSession,
+    ws: WorkspaceFixture,
+    bolna: RecordingBolnaClient,
+    outcome_stages: dict[str, str],
+) -> None:
+    key = await _setup(api, ws)
+    lead = await _lead(api, ws)
+    execution_id = await _trigger(api, ws, lead["id"])
+
+    response = await _post(
+        api,
+        key,
+        _bolna_body(execution_id, status="busy", summary=None, transcript=None, duration=0),
+    )
+    assert response.status_code == 200, response.text
+    assert str(await _lead_stage(db_session, lead["id"])) == outcome_stages["unanswered"]
+
+
+@pytest.mark.integration
+async def test_a_lead_already_past_the_initial_stage_is_left_alone(
+    api: AsyncClient,
+    db_session: AsyncSession,
+    ws: WorkspaceFixture,
+    bolna: RecordingBolnaClient,
+    outcome_stages: dict[str, str],
+) -> None:
+    """Already in the answered stage, and the call did not answer."""
+    key = await _setup(api, ws)
+    lead = await _lead(api, ws)
+    await _set_stage(db_session, lead["id"], outcome_stages["answered"])
+    execution_id = await _trigger(api, ws, lead["id"])
+
+    response = await _post(
+        api,
+        key,
+        _bolna_body(execution_id, status="no-answer", summary=None, transcript=None, duration=0),
+    )
+    assert response.status_code == 200, response.text
+    assert str(await _lead_stage(db_session, lead["id"])) == outcome_stages["answered"]
+    assert await _stage_changes(db_session, ws) == []
+
+
+@pytest.mark.integration
+async def test_a_won_lead_is_never_moved_by_a_call(
+    api: AsyncClient,
+    db_session: AsyncSession,
+    ws: WorkspaceFixture,
+    bolna: RecordingBolnaClient,
+    outcome_stages: dict[str, str],
+) -> None:
+    key = await _setup(api, ws)
+    lead = await _lead(api, ws)
+    await _set_stage(db_session, lead["id"], outcome_stages["won"])
+    execution_id = await _trigger(api, ws, lead["id"])
+
+    response = await _post(api, key, _bolna_body(execution_id, status="completed"))
+    assert response.status_code == 200, response.text
+    assert str(await _lead_stage(db_session, lead["id"])) == outcome_stages["won"]
+    assert await _stage_changes(db_session, ws) == []
+
+
+@pytest.mark.integration
+async def test_a_lost_lead_is_never_moved_by_a_call(
+    api: AsyncClient,
+    db_session: AsyncSession,
+    ws: WorkspaceFixture,
+    bolna: RecordingBolnaClient,
+    outcome_stages: dict[str, str],
+) -> None:
+    key = await _setup(api, ws)
+    lead = await _lead(api, ws)
+    await _set_stage(db_session, lead["id"], outcome_stages["lost"])
+    execution_id = await _trigger(api, ws, lead["id"])
+
+    response = await _post(api, key, _bolna_body(execution_id, status="completed"))
+    assert response.status_code == 200, response.text
+    assert str(await _lead_stage(db_session, lead["id"])) == outcome_stages["lost"]
+    assert await _stage_changes(db_session, ws) == []
+
+
+@pytest.mark.integration
+async def test_a_delayed_delivery_corrects_unanswered_to_answered(
+    api: AsyncClient,
+    db_session: AsyncSession,
+    ws: WorkspaceFixture,
+    bolna: RecordingBolnaClient,
+    outcome_stages: dict[str, str],
+) -> None:
+    """The hangup arrives first and looks unanswered; the completed result
+    seconds later proves there was a conversation."""
+    key = await _setup(api, ws)
+    lead = await _lead(api, ws)
+    execution_id = await _trigger(api, ws, lead["id"])
+
+    first = await _post(
+        api,
+        key,
+        _bolna_body(
+            execution_id, status="call-disconnected", summary=None, transcript=None, duration=0
+        ),
+    )
+    assert first.status_code == 200, first.text
+    assert str(await _lead_stage(db_session, lead["id"])) == outcome_stages["unanswered"]
+
+    second = await _post(api, key, _bolna_body(execution_id, status="completed"))
+    assert second.status_code == 200, second.text
+    assert second.json()["status"] == "upgraded"
+    assert str(await _lead_stage(db_session, lead["id"])) == outcome_stages["answered"]
+
+    # Two moves, the second correcting the first, each with its own old/new ids.
+    changes = await _stage_changes(db_session, ws)
+    assert [c.payload["new_stage_id"] for c in changes] == [
+        outcome_stages["unanswered"],
+        outcome_stages["answered"],
+    ]
+    assert changes[1].payload["old_stage_id"] == outcome_stages["unanswered"]
+
+
+@pytest.mark.integration
+async def test_no_mapping_means_no_stage_change(
+    api: AsyncClient,
+    db_session: AsyncSession,
+    ws: WorkspaceFixture,
+    bolna: RecordingBolnaClient,
+) -> None:
+    """Every existing workspace. The call is still logged; nothing moves."""
+    await login(api, ws.owner)
+    initial = await _stage_by_kind(db_session, ws, StageKind.INITIAL)
+    assert VOICE_OUTCOME_STAGES not in (ws.workspace.settings or {})
+
+    key = await _setup(api, ws)
+    lead = await _lead(api, ws)
+    execution_id = await _trigger(api, ws, lead["id"])
+
+    response = await _post(api, key, _bolna_body(execution_id, status="completed"))
+    assert response.status_code == 200, response.text
+    assert await _lead_stage(db_session, lead["id"]) == initial.id
+    assert await _stage_changes(db_session, ws) == []
+    # And the call itself was still recorded.
+    assert len(await _call_logs(db_session, ws)) == 1
+
+
+@pytest.mark.integration
+async def test_a_mapping_naming_another_workspaces_stage_is_ignored(
+    api: AsyncClient,
+    db_session: AsyncSession,
+    hasher: PasswordHasherService,
+    ws: WorkspaceFixture,
+    bolna: RecordingBolnaClient,
+) -> None:
+    """Scoping, on this path like every other: another tenant's id reads as absent."""
+    other = await build_workspace(
+        db_session, hasher, name="Other Stage Co", owner_email="owner@otherstage.example"
+    )
+    their_active = await _stage_by_kind(db_session, other, StageKind.ACTIVE)
+    initial = await _stage_by_kind(db_session, ws, StageKind.INITIAL)
+    await _configure(db_session, ws, answered=str(their_active.id), unanswered=None)
+
+    await login(api, ws.owner)
+    key = await _setup(api, ws)
+    lead = await _lead(api, ws)
+    execution_id = await _trigger(api, ws, lead["id"])
+
+    response = await _post(api, key, _bolna_body(execution_id, status="completed"))
+    assert response.status_code == 200, response.text
+    assert await _lead_stage(db_session, lead["id"]) == initial.id
+    assert await _stage_changes(db_session, ws) == []
+
+
+# --- the outcome has to be evidenced, not merely successful -------------------
+
+
+@pytest.mark.integration
+async def test_an_unreachable_number_moves_to_the_unanswered_stage(
+    api: AsyncClient,
+    db_session: AsyncSession,
+    ws: WorkspaceFixture,
+    bolna: RecordingBolnaClient,
+    outcome_stages: dict[str, str],
+) -> None:
+    """A switched-off or unreachable number arrives as one of Bolna's failures."""
+    key = await _setup(api, ws)
+    for index, status in enumerate(("failed", "canceled", "balance-low")):
+        lead = await _lead(api, ws, name=f"Unreachable {status}", phone=f"+91900001{index:04d}")
+        execution_id = await _trigger(api, ws, lead["id"])
+        response = await _post(
+            api,
+            key,
+            _bolna_body(execution_id, status=status, summary=None, transcript=None, duration=0),
+        )
+        assert response.status_code == 200, response.text
+        assert str(await _lead_stage(db_session, lead["id"])) == outcome_stages["unanswered"], (
+            status
+        )
+
+
+@pytest.mark.integration
+async def test_a_completed_call_with_no_conversation_evidence_moves_nothing(
+    api: AsyncClient,
+    db_session: AsyncSession,
+    ws: WorkspaceFixture,
+    bolna: RecordingBolnaClient,
+    outcome_stages: dict[str, str],
+) -> None:
+    """An accepted API response is not proof that the caller spoke.
+
+    `completed` with no transcript and no talk time satisfies `succeeded` but
+    not `had_conversation`, so it is neither answered nor unanswered — and in
+    particular must not be filed as unanswered.
+    """
+    key = await _setup(api, ws)
+    lead = await _lead(api, ws)
+    execution_id = await _trigger(api, ws, lead["id"])
+
+    response = await _post(
+        api,
+        key,
+        _bolna_body(execution_id, status="completed", summary=None, transcript=None, duration=0),
+    )
+    assert response.status_code == 200, response.text
+    assert str(await _lead_stage(db_session, lead["id"])) == outcome_stages["initial"]
+    assert await _stage_changes(db_session, ws) == []
+    # The call is still logged; only the stage move is withheld.
+    assert len(await _call_logs(db_session, ws)) == 1
+
+
+@pytest.mark.integration
+async def test_an_unknown_status_carrying_a_summary_is_not_filed_as_unanswered(
+    api: AsyncClient,
+    db_session: AsyncSession,
+    ws: WorkspaceFixture,
+    bolna: RecordingBolnaClient,
+    outcome_stages: dict[str, str],
+) -> None:
+    """`terminal` is also true for a status this release has never seen.
+
+    That is a processing unknown, not evidence the caller could not be reached,
+    so it must not become the unanswered stage.
+    """
+    key = await _setup(api, ws)
+    lead = await _lead(api, ws)
+    execution_id = await _trigger(api, ws, lead["id"])
+
+    response = await _post(
+        api,
+        key,
+        _bolna_body(
+            execution_id, status="some-status-we-have-never-seen", transcript=None, duration=0
+        ),
+    )
+    assert response.status_code == 200, response.text
+    assert str(await _lead_stage(db_session, lead["id"])) == outcome_stages["initial"]
+    assert await _stage_changes(db_session, ws) == []
+
+
+@pytest.mark.integration
+async def test_a_summariser_failure_never_files_the_lead_as_unanswered(
+    api: AsyncClient,
+    db_session: AsyncSession,
+    ws: WorkspaceFixture,
+    bolna: RecordingBolnaClient,
+    install_summarizer: Any,
+    outcome_stages: dict[str, str],
+) -> None:
+    """A technical error on our side is not a failed phone call.
+
+    The summariser raises; the conversation evidence is untouched, so the lead
+    still moves to the answered stage.
+    """
+    install_summarizer(_StubSummarizer(error=RuntimeError("summariser down")))
+    key = await _setup(api, ws)
+    lead = await _lead(api, ws)
+    execution_id = await _trigger(api, ws, lead["id"])
+
+    response = await _post(api, key, _bolna_body(execution_id, status="completed", summary=None))
+    assert response.status_code == 200, response.text
+    assert str(await _lead_stage(db_session, lead["id"])) == outcome_stages["answered"]
+
+
+@pytest.mark.integration
+async def test_a_duplicate_delivery_moves_nothing_a_second_time(
+    api: AsyncClient,
+    db_session: AsyncSession,
+    ws: WorkspaceFixture,
+    bolna: RecordingBolnaClient,
+    outcome_stages: dict[str, str],
+) -> None:
+    """Idempotent: the same body twice leaves exactly one stage change."""
+    key = await _setup(api, ws)
+    lead = await _lead(api, ws)
+    execution_id = await _trigger(api, ws, lead["id"])
+    body = _bolna_body(execution_id, status="completed")
+
+    first = await _post(api, key, body)
+    assert first.status_code == 200, first.text
+    assert first.json()["status"] == "accepted"
+    second = await _post(api, key, body)
+    assert second.status_code == 200, second.text
+    assert second.json()["status"] == "duplicate"
+
+    assert str(await _lead_stage(db_session, lead["id"])) == outcome_stages["answered"]
+    assert len(await _stage_changes(db_session, ws)) == 1
+
+
+@pytest.mark.integration
+async def test_a_manual_move_is_not_overwritten_by_a_delayed_correction(
+    api: AsyncClient,
+    db_session: AsyncSession,
+    ws: WorkspaceFixture,
+    bolna: RecordingBolnaClient,
+    outcome_stages: dict[str, str],
+) -> None:
+    """The correction only overturns this automation's own verdict.
+
+    The hangup files the lead as unanswered; a person then moves it back to the
+    unanswered stage deliberately. The later completed delivery must leave that
+    human decision alone, because the newest stage change is now theirs.
+    """
+    key = await _setup(api, ws)
+    lead = await _lead(api, ws)
+    execution_id = await _trigger(api, ws, lead["id"])
+
+    first = await _post(
+        api,
+        key,
+        _bolna_body(
+            execution_id, status="call-disconnected", summary=None, transcript=None, duration=0
+        ),
+    )
+    assert first.status_code == 200, first.text
+    assert str(await _lead_stage(db_session, lead["id"])) == outcome_stages["unanswered"]
+
+    # A person touches the stage: away and back, through the real endpoint, so
+    # the newest STAGE_CHANGE carries their membership as the actor.
+    for stage_id in (outcome_stages["answered"], outcome_stages["unanswered"]):
+        patched = await api.patch(
+            ws.path(f"/leads/{lead['id']}"), headers=ws.owner.auth, json={"stage_id": stage_id}
+        )
+        assert patched.status_code == 200, patched.text
+
+    second = await _post(api, key, _bolna_body(execution_id, status="completed"))
+    assert second.status_code == 200, second.text
+    assert second.json()["status"] == "upgraded"
+    # Still where the person left it.
+    assert str(await _lead_stage(db_session, lead["id"])) == outcome_stages["unanswered"]
+
+
+@pytest.mark.integration
+async def test_an_ambiguous_mapping_moves_nothing(
+    api: AsyncClient,
+    db_session: AsyncSession,
+    ws: WorkspaceFixture,
+    bolna: RecordingBolnaClient,
+) -> None:
+    """Both outcomes pointed at one stage is a configuration mistake."""
+    await login(api, ws.owner)
+    initial = await _stage_by_kind(db_session, ws, StageKind.INITIAL)
+    rows = await db_session.execute(
+        select(Stage).where(Stage.workspace_id == ws.id, Stage.kind == StageKind.ACTIVE)
+    )
+    same = rows.scalars().first()
+    assert same is not None
+    await _configure(db_session, ws, answered=str(same.id), unanswered=str(same.id))
+
+    key = await _setup(api, ws)
+    lead = await _lead(api, ws)
+    execution_id = await _trigger(api, ws, lead["id"])
+
+    response = await _post(api, key, _bolna_body(execution_id, status="completed"))
+    assert response.status_code == 200, response.text
+    assert await _lead_stage(db_session, lead["id"]) == initial.id
+    assert await _stage_changes(db_session, ws) == []
+
+
+@pytest.mark.integration
+async def test_a_non_active_target_stage_is_refused(
+    api: AsyncClient,
+    db_session: AsyncSession,
+    ws: WorkspaceFixture,
+    bolna: RecordingBolnaClient,
+) -> None:
+    """Won and lost are decisions about the deal, not records of a phone call."""
+    await login(api, ws.owner)
+    initial = await _stage_by_kind(db_session, ws, StageKind.INITIAL)
+    won = await _stage_by_kind(db_session, ws, StageKind.WON)
+    await _configure(db_session, ws, answered=str(won.id), unanswered=None)
+
+    key = await _setup(api, ws)
+    lead = await _lead(api, ws)
+    execution_id = await _trigger(api, ws, lead["id"])
+
+    response = await _post(api, key, _bolna_body(execution_id, status="completed"))
+    assert response.status_code == 200, response.text
+    assert await _lead_stage(db_session, lead["id"]) == initial.id
+    assert await _stage_changes(db_session, ws) == []

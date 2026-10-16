@@ -27,6 +27,8 @@ __all__ = [
     "StageRead",
     "StageReorder",
     "StageUpdate",
+    "VoiceOutcomeStagesRead",
+    "VoiceOutcomeStagesUpdate",
     "WorkspacePreferencesRead",
     "WorkspacePreferencesUpdate",
 ]
@@ -41,6 +43,32 @@ class StageRead(BaseModel):
     color: str
     sort_order: int
     is_archived: bool
+
+
+class VoiceOutcomeStagesUpdate(BaseModel):
+    """Which two stages a finished AI call moves a lead to.
+
+    Exactly two stage ids, both required: a half-configured mapping would move
+    one outcome and silently drop the other, which reads as a bug rather than
+    as a choice. To stop the behaviour, archive a stage or clear the mapping.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    answered: uuid.UUID
+    unanswered: uuid.UUID
+
+
+class VoiceOutcomeStagesRead(BaseModel):
+    """The configured stages in full, so a caller can see what it just set.
+
+    Null when nothing is configured, which is every workspace by default.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    answered: StageRead | None
+    unanswered: StageRead | None
 
 
 class StagePipelineRead(BaseModel):

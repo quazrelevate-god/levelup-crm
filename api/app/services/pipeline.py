@@ -33,6 +33,14 @@ from app.models.pipeline import (
     LostReason,
     Stage,
 )
+from app.models.workspace import Workspace
+from app.services.voice_settings import (
+    OUTCOME_ANSWERED,
+    OUTCOME_UNANSWERED,
+    clear_outcome_stages,
+    read_outcome_stages,
+    write_outcome_stages,
+)
 from app.tenancy.session import ScopedSession
 
 __all__ = ["CustomActionService", "DispositionService", "PipelineService"]
@@ -116,6 +124,87 @@ class PipelineService:
         stage.is_archived = True
         await self._session.flush()
         return stage
+
+    # --- which stages a finished AI call implies -----------------------------
+
+    async def voice_outcome_stages(self, workspace: Workspace) -> tuple[Stage | None, Stage | None]:
+        """The configured pair, resolved to stage rows, or `(None, None)`.
+
+        A configured id that has since been deleted or archived reads as absent
+        rather than raising: the mapping describes intent, and the automation
+        already declines to move a lead when the stage is gone.
+        """
+        answered_id, unanswered_id = read_outcome_stages(workspace.settings)
+
+        async def one(stage_id: uuid.UUID | None) -> Stage | None:
+            if stage_id is None:
+                return None
+            stage = await self._session.get(Stage, stage_id)
+            return stage if stage is not None and not stage.is_archived else None
+
+        return await one(answered_id), await one(unanswered_id)
+
+    async def set_voice_outcome_stages(
+        self, workspace: Workspace, *, answered: uuid.UUID, unanswered: uuid.UUID
+    ) -> tuple[Stage, Stage]:
+        """Validate both stages, then store the pair.
+
+        Every rejection happens before anything is written, so the mapping is
+        either wholly valid or wholly unchanged:
+
+        - the two ids must differ — one stage for both outcomes cannot be acted
+          on, and the automation refuses it anyway;
+        - each must exist *in this workspace*. `ScopedSession.get` returns
+          `None` for another tenant's id exactly as for one that does not
+          exist, so a cross-workspace id is a 404 and reveals nothing;
+        - each must be a live `ACTIVE` stage. The initial, won and lost
+          singletons are the pipeline's own ends; moving a lead into them is a
+          decision about the deal, not a record of a phone call.
+
+        Only this one namespace in `workspace.settings` is replaced; every
+        other key is preserved.
+        """
+        if answered == unanswered:
+            raise api_error(
+                422,
+                "stage_mapping_ambiguous",
+                "The answered and unanswered outcomes need two different stages.",
+                stage_id=str(answered),
+            )
+
+        resolved: dict[str, Stage] = {}
+        for outcome, stage_id in ((OUTCOME_ANSWERED, answered), (OUTCOME_UNANSWERED, unanswered)):
+            stage = await self.get_stage(stage_id)  # 404 for absent or another workspace's
+            if stage.is_archived:
+                raise api_error(
+                    422,
+                    "stage_archived",
+                    f"The {outcome} stage is archived. Choose a live stage.",
+                    outcome=outcome,
+                    stage_id=str(stage_id),
+                )
+            if stage.kind is not StageKind.ACTIVE:
+                raise api_error(
+                    422,
+                    "stage_kind_not_active",
+                    f"The {outcome} stage must be an active stage, not the "
+                    f"{stage.kind.value.lower()} one.",
+                    outcome=outcome,
+                    stage_id=str(stage_id),
+                    kind=stage.kind.value,
+                )
+            resolved[outcome] = stage
+
+        workspace.settings = write_outcome_stages(
+            workspace.settings, answered=answered, unanswered=unanswered
+        )
+        await self._session.flush()
+        return resolved[OUTCOME_ANSWERED], resolved[OUTCOME_UNANSWERED]
+
+    async def clear_voice_outcome_stages(self, workspace: Workspace) -> None:
+        """Stop the behaviour, leaving every other setting intact."""
+        workspace.settings = clear_outcome_stages(workspace.settings)
+        await self._session.flush()
 
     async def reorder_stages(self, *, ordered_ids: Sequence[uuid.UUID]) -> Sequence[Stage]:
         """Reorder the ACTIVE band. The singletons bracket it and do not move."""

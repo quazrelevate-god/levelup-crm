@@ -141,6 +141,7 @@ M3_COLLECTION_ROUTES: list[str] = [
     "/settings/call-dispositions",
     "/settings/custom-actions",
     "/settings/preferences",
+    "/settings/voice-outcome-stages",
 ]
 
 #: Routes taking a taxonomy id, tagged with which kind so the probe can aim a
@@ -162,6 +163,11 @@ M3_COLLECTION_WRITE_ROUTES: list[tuple[str, str]] = [
     ("POST", "/settings/call-dispositions"),
     ("PATCH", "/settings/preferences"),
     ("POST", "/settings/custom-actions"),
+    # Which stages a finished AI call moves a lead to. A single-document
+    # setting rather than a collection, so set and clear sit here beside the
+    # other taxonomy writes; the GET is in `M3_COLLECTION_ROUTES`.
+    ("PUT", "/settings/voice-outcome-stages"),
+    ("DELETE", "/settings/voice-outcome-stages"),
 ]
 
 #: Custom-action routes, which additionally sit behind a feature flag.
