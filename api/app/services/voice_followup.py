@@ -45,12 +45,63 @@ from app.models.voice import VoiceCallExecution
 if TYPE_CHECKING:
     from app.tenancy.session import ScopedSession
 
-__all__ = ["PURPOSE_KEY", "FollowupReadiness", "VoiceFollowupService"]
+__all__ = [
+    "FIRST_CALL_OPENING",
+    "FOLLOWUP_CALL_OPENING",
+    "OPENING_KEY",
+    "PURPOSE_KEY",
+    "FollowupReadiness",
+    "VoiceFollowupService",
+    "opening_line",
+]
 
 #: The `user_data` key the agent's graph reads on its expression edge. Changing
 #: this string silently disables every follow-up: the greeting node simply never
 #: hands over, and calls complete as ordinary first calls with nobody the wiser.
 PURPOSE_KEY = "crm_call_purpose"
+
+#: The agent's whole welcome message is this one variable, so what the caller
+#: hears first is decided here.
+#:
+#: A Bolna agent has exactly one welcome message, and it is spoken by the
+#: platform rather than generated — which is why the first audio arrives in
+#: about 110 ms rather than a second and a half. A first call and a follow-up
+#: need different first words, and the only way to have both on one agent is
+#: to make the message a variable and send the line.
+OPENING_KEY = "call_opening"
+
+#: A first call: the whole greeting at once, because it is fastest and the
+#: agent's greeting node is written around having already said it.
+FIRST_CALL_OPENING = (
+    "Hi {name}, this is Aisha from Level Up Learning. Is now a good time for a quick call?"
+)
+
+#: The same line with no name, for a lead whose name field is empty. Before
+#: this existed the welcome rendered as "Hi ," out loud.
+FIRST_CALL_OPENING_NO_NAME = (
+    "Hi, this is Aisha from Level Up Learning. Is now a good time for a quick call?"
+)
+
+#: A follow-up: one word, then wait. The caller already knows Aisha, and a
+#: person ringing someone they have spoken to says hello and lets them answer.
+#: The follow-up node then gives the name and the reason in its own words,
+#: which is the part that has to sound like a person rather than a recording.
+FOLLOWUP_CALL_OPENING = "Hello?"
+
+
+def opening_line(name: str | None, *, purpose: VoiceCallPurpose | None) -> str:
+    """What the platform says before any node runs.
+
+    Rendered here rather than left to Bolna because the value *is* the whole
+    welcome message: a `{name}` inside a substituted variable is not itself
+    substituted, so the name has to be in the string before it is sent.
+    """
+    if purpose is not None:
+        return FOLLOWUP_CALL_OPENING
+    clean = (name or "").strip()
+    if not clean:
+        return FIRST_CALL_OPENING_NO_NAME
+    return FIRST_CALL_OPENING.format(name=clean)
 
 
 class FollowupReadiness:

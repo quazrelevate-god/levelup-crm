@@ -74,7 +74,7 @@ from app.services.leads import LeadService
 from app.services.program_context import ProgramContextService
 from app.services.voice_context import VoiceContext, VoiceContextService
 from app.services.voice_extraction import ExtractionOutcome, VoiceExtractionService
-from app.services.voice_followup import PURPOSE_KEY
+from app.services.voice_followup import OPENING_KEY, PURPOSE_KEY, opening_line
 from app.services.voice_postcall import (
     CALLER_PHONE_PATHS,
     DIRECTION_PATHS,
@@ -330,6 +330,15 @@ class VoiceCallService:
         # absence *is* the first-call signal.
         if purpose is not None:
             user_data[PURPOSE_KEY] = purpose.value
+        # The agent's welcome message is a single variable, so this line is
+        # literally the first thing the caller hears. `rendered` is the
+        # projected, speech-rendered lead record, so a caller whose template
+        # does not grant View on the name field gets the nameless opening
+        # rather than a name it may not see — the projection chokepoint
+        # applies here like everywhere else.
+        user_data[OPENING_KEY] = opening_line(
+            str(rendered.get("name") or "") or None, purpose=purpose
+        )
         if context.last_call_summary:
             user_data["crm_last_call_summary"] = context.last_call_summary
         if context.last_call_at is not None:

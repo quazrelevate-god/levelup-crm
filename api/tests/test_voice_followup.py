@@ -36,7 +36,12 @@ from app.auth.passwords import PasswordHasherService
 from app.integrations.bolna import BolnaSettings, RecordingBolnaClient
 from app.models.enums import VoiceCallPurpose
 from app.models.voice import VoiceCallExecution
-from app.services.voice_followup import PURPOSE_KEY, VoiceFollowupService
+from app.services.voice_followup import (
+    FOLLOWUP_CALL_OPENING,
+    OPENING_KEY,
+    PURPOSE_KEY,
+    VoiceFollowupService,
+)
 from app.tenancy.session import ScopedSession
 
 FAKE_BOLNA_KEY = "bn-test-key-do-not-use-0000000000"
@@ -265,3 +270,67 @@ async def test_readiness_reads_only_this_workspaces_calls(
     readiness = await service.readiness(uuid.UUID(lead_id))
     assert not readiness.allowed
     assert readiness.purpose is None
+
+
+# --- the first thing the caller hears -----------------------------------------
+
+
+async def test_a_first_call_opens_with_the_whole_greeting(
+    api: AsyncClient, ws: WorkspaceFixture, bolna: RecordingBolnaClient
+) -> None:
+    """The agent's welcome message is one variable, so this line is the call.
+
+    Sent fully rendered, name included: a `{name}` inside a substituted
+    variable is not itself substituted, so a template left here would be read
+    out as literal curly brackets.
+    """
+    lead_id = await _lead(api, ws)
+    assert (await _call(api, ws, lead_id)).status_code == 200
+
+    opening = bolna.calls[-1].user_data[OPENING_KEY]
+    assert (
+        opening
+        == f"Hi {NAME}, this is Aisha from Level Up Learning. Is now a good time for a quick call?"
+    )
+    assert "{" not in opening
+
+
+async def test_a_follow_up_opens_with_one_word_and_waits(
+    api: AsyncClient, db_session: AsyncSession, ws: WorkspaceFixture, bolna: RecordingBolnaClient
+) -> None:
+    """A caller who already knows Aisha is greeted the way a person would.
+
+    The name and the reason come from the follow-up node afterwards, in its
+    own words. Putting them in the welcome would make the caller's first
+    "hello" collide with a sentence already in progress.
+    """
+    lead_id = await _lead(api, ws)
+    assert (await _call(api, ws, lead_id)).status_code == 200
+    await _finish(db_session, lead_id)
+
+    assert (await _call(api, ws, lead_id, followup=True)).status_code == 200
+
+    assert bolna.calls[-1].user_data[OPENING_KEY] == FOLLOWUP_CALL_OPENING
+    assert NAME not in bolna.calls[-1].user_data[OPENING_KEY]
+
+
+async def test_a_lead_with_no_name_is_not_greeted_as_hi_comma(
+    api: AsyncClient, ws: WorkspaceFixture, bolna: RecordingBolnaClient
+) -> None:
+    """Regression: the welcome used to render "Hi ," out loud.
+
+    `{name}` substituted to nothing and the comma stayed. A separate nameless
+    line is the fix, because there is no way to make one template read well
+    both with and without a name.
+    """
+    await login(api, ws.owner)
+    created = await api.post(
+        ws.path("/leads"), headers=ws.owner.auth, json={"values": {"phone": "+919000000002"}}
+    )
+    assert created.status_code == 201, created.text
+
+    assert (await _call(api, ws, str(created.json()["id"]))).status_code == 200
+
+    opening = bolna.calls[-1].user_data[OPENING_KEY]
+    assert opening.startswith("Hi, this is Aisha")
+    assert "Hi ," not in opening
