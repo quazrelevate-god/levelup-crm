@@ -549,3 +549,41 @@ test.describe('the AI summary appears without a manual refresh', () => {
     }
   })
 })
+
+test.describe('the Follow-up Call button', () => {
+  test('sits beside AI Call and asks the server for a follow-up', async ({ page }) => {
+    const stub = await signIn(page, WITH_CALLS)
+    await openLead(page)
+
+    const panel = page.getByTestId('lead-detail')
+    await expect(panel.getByRole('button', { name: 'AI Call', exact: true })).toBeVisible()
+    await panel.getByRole('button', { name: 'Follow-up Call' }).click()
+
+    // One flag, not a choice of opening: which follow-up this is comes from
+    // the lead's call history, server-side.
+    await expect.poll(() => stub.lastVoiceTrigger()?.followup).toBe(true)
+    await expect(page.getByText(/Follow-up call started/)).toBeVisible()
+  })
+
+  test('an ordinary AI call is not sent as a follow-up', async ({ page }) => {
+    const stub = await signIn(page, WITH_CALLS)
+    await openLead(page)
+
+    await page.getByRole('button', { name: 'AI Call', exact: true }).click()
+
+    await expect.poll(() => stub.lastVoiceTrigger()?.followup).toBe(false)
+    await expect(page.getByText(/AI call started/)).toBeVisible()
+  })
+
+  test('a lead with no finished call is told why, not quietly called anyway', async ({ page }) => {
+    await signIn(page, { ...WITH_CALLS, followupRefused: true })
+    await openLead(page)
+
+    await page.getByRole('button', { name: 'Follow-up Call' }).click()
+
+    // The server's own sentence, surfaced as-is. The panel does not re-decide
+    // the rule, so the two cannot drift apart.
+    await expect(page.getByText(/no finished AI call yet/)).toBeVisible()
+    await expect(page.getByText(/Follow-up call started/)).toHaveCount(0)
+  })
+})

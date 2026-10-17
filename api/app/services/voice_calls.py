@@ -55,7 +55,13 @@ from typing import Any
 from app.errors import api_error, not_found
 from app.fields.rendering import render_for_voice
 from app.integrations.bolna import BolnaCallRequest, BolnaClient, BolnaSettings
-from app.models.enums import ChangesetSource, StageKind, SystemActionKind, VoiceCallStatus
+from app.models.enums import (
+    ChangesetSource,
+    StageKind,
+    SystemActionKind,
+    VoiceCallPurpose,
+    VoiceCallStatus,
+)
 from app.models.field import FieldOption, LeadField
 from app.models.lead import Action, Lead
 from app.models.pipeline import CallDisposition, Stage
@@ -68,6 +74,7 @@ from app.services.leads import LeadService
 from app.services.program_context import ProgramContextService
 from app.services.voice_context import VoiceContext, VoiceContextService
 from app.services.voice_extraction import ExtractionOutcome, VoiceExtractionService
+from app.services.voice_followup import PURPOSE_KEY
 from app.services.voice_postcall import (
     CALLER_PHONE_PATHS,
     DIRECTION_PATHS,
@@ -265,7 +272,11 @@ class VoiceCallService:
         return fields, options
 
     async def build_user_data(
-        self, context: VoiceContext, *, idempotency_key: uuid.UUID
+        self,
+        context: VoiceContext,
+        *,
+        idempotency_key: uuid.UUID,
+        purpose: VoiceCallPurpose | None = None,
     ) -> dict[str, Any]:
         """Assemble the `user_data` Bolna substitutes into the agent's prompt.
 
@@ -312,6 +323,13 @@ class VoiceCallService:
                 "crm_is_repeat_caller": "yes" if context.call_count else "no",
             }
         )
+        # Which conversation this is. Omitted entirely on a first call rather
+        # than sent as an empty string: the agent's greeting node hands over on
+        # `crm_call_purpose contains "followup"`, and an absent key and a blank
+        # one are not reliably the same thing to a template substitution. The
+        # absence *is* the first-call signal.
+        if purpose is not None:
+            user_data[PURPOSE_KEY] = purpose.value
         if context.last_call_summary:
             user_data["crm_last_call_summary"] = context.last_call_summary
         if context.last_call_at is not None:
@@ -357,7 +375,13 @@ class VoiceCallService:
         user_data.update(await self._program_context.for_values(context.values))
         return user_data
 
-    async def trigger(self, lead: Lead, *, agent_id: str | None = None) -> TriggerOutcome:
+    async def trigger(
+        self,
+        lead: Lead,
+        *,
+        agent_id: str | None = None,
+        purpose: VoiceCallPurpose | None = None,
+    ) -> TriggerOutcome:
         """Place a Bolna call for an existing lead.
 
         The shape is `app/events/dispatcher.py`'s, deliberately: **claim, send,
@@ -396,7 +420,9 @@ class VoiceCallService:
             raise api_error(422, "lead_has_no_phone", "That lead has no phone number")
 
         idempotency_key = uuid.uuid4()
-        user_data = await self.build_user_data(context, idempotency_key=idempotency_key)
+        user_data = await self.build_user_data(
+            context, idempotency_key=idempotency_key, purpose=purpose
+        )
 
         row = VoiceCallExecution(
             lead_id=lead.id,

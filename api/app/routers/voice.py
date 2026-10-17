@@ -63,6 +63,7 @@ from app.services.leads import LeadService
 from app.services.program_context import ProgramContextService
 from app.services.voice_calls import VoiceCallService
 from app.services.voice_context import VoiceContext, VoiceContextService
+from app.services.voice_followup import VoiceFollowupService
 from app.services.voice_history import CallWithLead, VoiceCallHistoryService
 from app.services.voice_postcall import CallSummarizer, extractions_from_payload
 from app.tenancy.scoping import WorkspaceScope, require_workspace
@@ -300,7 +301,19 @@ async def trigger_voice_call(
     """
     _require(scope, "log_calls")
     lead = await calls.resolve_lead(lead_id=payload.lead_id, phone=payload.phone)
-    outcome = await calls.trigger(lead, agent_id=payload.agent_id)
+
+    # A follow-up is refused, not downgraded to a first call. Silently placing
+    # the wrong conversation would have the agent open with "last time you were
+    # asking about…" to somebody it has never spoken to, and the operator would
+    # have no idea it had happened.
+    purpose = None
+    if payload.followup:
+        readiness = await VoiceFollowupService(scope.session).readiness(lead.id)
+        if not readiness.allowed:
+            raise api_error(422, "followup_not_available", readiness.reason or "")
+        purpose = readiness.purpose
+
+    outcome = await calls.trigger(lead, agent_id=payload.agent_id, purpose=purpose)
     row = outcome.execution
     return VoiceCallTriggerResult(
         call_id=row.id,

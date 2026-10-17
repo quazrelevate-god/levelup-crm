@@ -756,6 +756,8 @@ export interface StubOptions {
    * Omitted means unconfigured, which is how a real workspace starts.
    */
   readonly voiceOutcomeStages?: { readonly answered: string; readonly unanswered: string }
+  /** When true, a follow-up trigger answers 422 `followup_not_available`. */
+  readonly followupRefused?: boolean
   /** The undo preview `preview-undo` returns — the conflict path needs one. */
   readonly undoPreview?: Record<string, unknown>
   /** When false, every task endpoint answers 403 insufficient_permissions. */
@@ -814,6 +816,8 @@ export interface StubHandle {
   readonly lastSearch: () => LastSearch | null
   /** The body of the last `PUT /settings/voice-outcome-stages`. */
   readonly lastOutcomeStages: () => { answered: string; unanswered: string } | null
+  /** The body of the last `POST /voice/calls`. */
+  readonly lastVoiceTrigger: () => { lead_id?: string; followup?: boolean } | null
   readonly lastBulk: () => { lead_ids?: string[]; values?: Record<string, unknown> } | null
   readonly lastUndo: () => { skip_conflicts?: boolean } | null
   readonly lastMapping: () => {
@@ -1080,6 +1084,9 @@ export async function stubApi(page: Page, options: StubOptions = {}): Promise<St
     options.voiceOutcomeStages ?? null
   //: The body of the last PUT, so a spec can assert what the UI sent.
   let lastOutcomeStages: { answered: string; unanswered: string } | null = null
+  //: The body of the last POST /voice/calls, so a spec can assert whether
+  //: the panel asked for a follow-up or an ordinary call.
+  let lastVoiceTrigger: { lead_id?: string; followup?: boolean } | null = null
   interface StubTask {
     id: string
     lead_id: string | null
@@ -2119,7 +2126,25 @@ export async function stubApi(page: Page, options: StubOptions = {}): Promise<St
     }
 
     if (path.endsWith('/voice/calls') && method === 'POST') {
-      const body = route.request().postDataJSON() as { lead_id?: string }
+      const body = route.request().postDataJSON() as { lead_id?: string; followup?: boolean }
+      lastVoiceTrigger = body
+      // The server refuses a follow-up for a lead with no finished call, and
+      // the panel is meant to show that refusal rather than pretend the call
+      // was placed. `followupRefused` lets a spec exercise that path.
+      if (body.followup && options.followupRefused) {
+        return route.fulfill({
+          status: 422,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            detail: {
+              code: 'followup_not_available',
+              message:
+                'This lead has no finished AI call yet, so there is no previous ' +
+                'conversation for a follow-up to refer back to.',
+            },
+          }),
+        })
+      }
       return json(route, 200, {
         call_id: 'call-triggered',
         lead_id: body.lead_id ?? 'lead-1',
@@ -2280,6 +2305,7 @@ export async function stubApi(page: Page, options: StubOptions = {}): Promise<St
     refreshCount: () => refreshCount,
     lastSearch: () => lastSearchBody,
     lastOutcomeStages: () => lastOutcomeStages,
+    lastVoiceTrigger: () => lastVoiceTrigger,
     lastBulk: () => lastBulk as { lead_ids?: string[]; values?: Record<string, unknown> } | null,
     lastUndo: () => lastUndo as { skip_conflicts?: boolean } | null,
     lastMapping: () =>

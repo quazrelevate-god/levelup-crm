@@ -940,6 +940,16 @@ export interface VoiceCallTrigger {
   readonly phone?: string
   /** Overrides the deployment's configured agent for this one call. */
   readonly agent_id?: string
+  /**
+   * Ask for a follow-up rather than a first call.
+   *
+   * A bare flag, not a choice of opening. The agent holds three follow-up
+   * openings and the server decides which one from the lead's own call
+   * history — an operator who could pick would eventually pick the one that
+   * tells somebody they broke a promise they never made. A lead with no
+   * finished call is refused with `followup_not_available`.
+   */
+  readonly followup?: boolean
 }
 
 /**

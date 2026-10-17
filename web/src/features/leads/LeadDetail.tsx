@@ -317,17 +317,18 @@ export function LeadDetail({
    * response has to be read rather than assumed — otherwise a refused call
    * shows a cheerful "started" message and nobody dials anybody.
    */
-  const startVoiceCall = async () => {
+  const startVoiceCall = async (followup = false) => {
     setError(null)
     setVoiceNotice(null)
     try {
-      const result = await triggerVoiceCall.mutateAsync({ lead_id: lead.id })
+      const result = await triggerVoiceCall.mutateAsync({ lead_id: lead.id, followup })
       if (result.error !== null || result.execution_id === null) {
         setError(result.error ?? 'Bolna accepted the request but returned no call id.')
         return
       }
+      const kind = followup ? 'Follow-up call' : 'AI call'
       setVoiceNotice(
-        `AI call started · ${result.bolna_status ?? result.status}` +
+        `${kind} started · ${result.bolna_status ?? result.status}` +
           (result.call_count > 0 ? ` · call ${result.call_count + 1} for this lead` : '') +
           ' · waiting for the result…',
       )
@@ -500,14 +501,28 @@ export function LeadDetail({
         <h3 className="text-sm font-medium">Log activity</h3>
 
         <div className="space-y-2">
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={triggerVoiceCall.isPending}
-            onClick={() => void startVoiceCall()}
-          >
-            {triggerVoiceCall.isPending ? 'Starting AI call…' : 'AI Call'}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={triggerVoiceCall.isPending}
+              onClick={() => void startVoiceCall()}
+            >
+              {triggerVoiceCall.isPending ? 'Starting AI call…' : 'AI Call'}
+            </Button>
+            {/* Not disabled when the lead has no finished call. The server
+                already refuses that, with a sentence that explains itself
+                better than a greyed-out button does — and re-deciding the rule
+                here would be a second copy of it, free to drift. */}
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={triggerVoiceCall.isPending}
+              onClick={() => void startVoiceCall(true)}
+            >
+              {triggerVoiceCall.isPending ? 'Starting…' : 'Follow-up Call'}
+            </Button>
+          </div>
           {voiceNotice ? (
             <p role="status" className="text-muted-foreground text-sm">
               {voiceNotice}
@@ -516,6 +531,10 @@ export function LeadDetail({
           <p className="text-muted-foreground text-xs">
             Calls this lead with the configured voice agent. The outcome and any corrected details
             arrive on the timeline once the call ends.
+          </p>
+          <p className="text-muted-foreground text-xs">
+            A follow-up picks up from the last conversation and talks about the application fee and
+            the interview slot. It needs a finished call to refer back to.
           </p>
         </div>
 

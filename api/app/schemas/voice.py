@@ -103,6 +103,13 @@ class VoiceCallTrigger(BaseModel):
     phone: str | None = Field(default=None, min_length=1, max_length=32)
     #: Override the deployment's configured agent for this one call.
     agent_id: str | None = Field(default=None, max_length=120)
+    #: Ask for a follow-up rather than a first call. A bare `true`, not a
+    #: purpose: *which* follow-up is read from the lead's own call history by
+    #: `VoiceFollowupService`, because a caller who could choose the opening
+    #: would eventually choose the one that tells somebody they broke a promise
+    #: they never made. The browser says "follow up with this lead"; the server
+    #: says which conversation that is.
+    followup: bool = False
 
     @model_validator(mode="after")
     def _exactly_one_identifier(self) -> VoiceCallTrigger:

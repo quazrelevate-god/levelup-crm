@@ -31,6 +31,7 @@ __all__ = [
     "StageKind",
     "SystemActionKind",
     "TemplateChannel",
+    "VoiceCallPurpose",
     "VoiceCallStatus",
 ]
 
@@ -319,3 +320,29 @@ class VoiceCallStatus(enum.StrEnum):
     COMPLETED = "COMPLETED"
     #: Bolna refused it, was unreachable, or the call ended without a summary.
     FAILED = "FAILED"
+
+
+class VoiceCallPurpose(enum.StrEnum):
+    """Which conversation a Bolna call is, as the agent's graph branches on it.
+
+    These are *protocol* values, not workspace taxonomy. Each one names a node
+    path inside the voice agent — the graph reads `crm_call_purpose` on an
+    expression edge and sends the call to the matching node — so renaming one
+    here breaks the agent, and a workspace cannot be allowed to invent its own.
+    That is what keeps them out of the configuration model: a lead stage is the
+    customer's word, but this is the integration's wire format.
+
+    The absence of a value means a first call, which is the default and is sent
+    as nothing at all rather than as a string. The agent's greeting node is the
+    entry point, and it only hands over when it sees one of these.
+    """
+
+    #: The first follow-up: they were interested, nothing has happened since.
+    FOLLOWUP = "followup"
+    #: They said they would come back and did not. A different opening, which
+    #: never makes them feel caught out.
+    FOLLOWUP_MISSED = "followup_missed"
+    #: They paid but have not booked the interview slot. Unreachable until
+    #: payment is integrated — the CRM cannot see a payment yet, and the agent
+    #: must never claim one has arrived.
+    FOLLOWUP_BOOKING = "followup_booking"
