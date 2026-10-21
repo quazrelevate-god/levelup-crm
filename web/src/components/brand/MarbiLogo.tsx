@@ -1,0 +1,45 @@
+import { cn } from '@/lib/utils'
+
+/**
+ * The coil centreline, from the Marbi site's favicon (32-unit box). The mark is
+ * a telephone cord seen end-on, so it is one open stroke, never a fill.
+ */
+const COIL =
+  'M9.0 25.1 8.5 25.0 8.0 25.0 7.6 24.8 7.1 24.6 6.7 24.4 6.3 24.0 5.9 23.7 5.5 23.3 5.2 22.8 4.9 22.3 4.7 21.8 4.4 21.2 4.3 20.6 4.1 20.0 4.0 19.3 4.0 18.6 4.0 17.9 4.1 17.2 4.2 16.5 4.3 15.7 4.5 15.0 4.8 14.3 5.1 13.6 5.5 12.9 5.9 12.2 6.3 11.6 6.8 11.0 7.4 10.4 8.0 9.8 8.6 9.3 9.2 8.8 9.9 8.4 10.6 8.0 11.4 7.7 12.1 7.4 12.9 7.2 13.7 7.1 14.5 7.0 15.3 6.9 16.1 6.9 16.9 7.0 17.7 7.1 18.5 7.3 19.3 7.6 20.0 7.9 20.8 8.2 21.5 8.6 22.1 9.0 22.8 9.5 23.4 10.1 23.9 10.6 24.5 11.2 24.9 11.9 25.4 12.5 25.8 13.2 26.1 13.9 26.4 14.6 26.6 15.3 26.8 16.1 27.0 16.8 27.0 17.5 27.1 18.2 27.1 18.9 27.0 19.6 26.9 20.3 26.7 20.9 26.5 21.5 26.3 22.0 26.0 22.6 25.7 23.0 25.4 23.5 25.0 23.9 24.6 24.2 24.2 24.5 23.7 24.7 23.3 24.9 22.8 25.0 22.3 25.1 21.9 25.1 21.4 25.0 20.9 24.9 20.5 24.7 20.0 24.5 19.6 24.2 19.2 23.9 18.9 23.5 18.5 23.1 18.2 22.6 17.9 22.1 17.7 21.5 17.5 20.9 17.3 20.3 17.2 19.6 17.1 19.0 17.1 18.3 17.1 17.6 17.2 16.9 17.4 16.1 17.5 15.4 17.8 14.7 18.1 14.0 18.4 13.3 18.8 12.6 19.2 11.9 19.7 11.3 20.2 10.7 20.8 10.1 21.4 9.6 22.0 9.1 22.7 8.6 23.4 8.2 24.1 7.9 24.9 7.6 25.6 7.3 26.4 7.2 27.2 7.0 28.0 6.9'
+
+/** Brand green: the deep value on light surfaces, the light value on dark. */
+const GREEN = 'text-[#1e5a44] dark:text-[#8fb9a1]'
+
+export function MarbiMark({ className }: { readonly className?: string }) {
+  return (
+    <svg
+      viewBox="2 2 28 28"
+      fill="none"
+      aria-hidden="true"
+      focusable="false"
+      className={cn('shrink-0', GREEN, className)}
+    >
+      <path
+        d={COIL}
+        stroke="currentColor"
+        strokeWidth={3.2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+/** "Marbi" set in General Sans Medium with the wordmark's tight tracking. */
+export function MarbiWordmark({ className }: { readonly className?: string }) {
+  return (
+    <span
+      className={cn(
+        'font-brand text-foreground leading-none font-medium tracking-[-0.035em]',
+        className,
+      )}
+    >
+      Marbi
+    </span>
+  )
+}

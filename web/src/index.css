@@ -57,6 +57,8 @@
 
   --font-sans:
     'Inter var', 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  /* The Marbi wordmark only. Body type stays Inter. */
+  --font-brand: 'General Sans', ui-sans-serif, system-ui, sans-serif;
 
   --ease-emphasized: cubic-bezier(0.2, 0, 0, 1);
   --ease-standard: cubic-bezier(0.2, 0, 0.2, 1);

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, Navigate, Outlet, useLocation } from 'react-router-dom'
 import { Menu, Settings2, X } from 'lucide-react'
 
+import { MarbiMark, MarbiWordmark } from '@/components/brand/MarbiLogo'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/features/auth/context'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
@@ -81,13 +82,10 @@ export function AppLayout() {
 
   const railContents = (
     <div className="flex h-full flex-col overflow-hidden py-3">
-      <div className="mb-2 flex h-12 items-center px-[18px]">
-        <img
-          src="/logo.png"
-          alt=""
-          aria-hidden="true"
-          className="size-8 shrink-0 rounded-full object-cover"
-        />
+      <div className="mb-2 flex h-12 items-center gap-2.5 px-[18px]">
+        <MarbiMark className="size-8" />
+        {/* Fades in with the nav labels as the rail widens. */}
+        <MarbiWordmark className="text-[1.375rem] opacity-0 transition-opacity duration-200 group-focus-within/rail:opacity-100 group-hover/rail:opacity-100" />
       </div>
 
       <div className="flex flex-col gap-0.5">
@@ -191,12 +189,7 @@ export function AppLayout() {
             >
               <Menu aria-hidden="true" />
             </Button>
-            <img
-              src="/logo.png"
-              alt=""
-              aria-hidden="true"
-              className="size-7 shrink-0 rounded-full object-cover lg:hidden"
-            />
+            <MarbiMark className="size-7 lg:hidden" />
             <span className="min-w-0">
               <span className="block truncate text-sm font-semibold">{workspaceName}</span>
               <span className="text-muted-foreground hidden truncate text-xs sm:block">
