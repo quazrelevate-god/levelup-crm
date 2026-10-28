@@ -115,6 +115,10 @@ Edit only on the fields extraction is allowed to fill.
 
 ## 4. Outbound — lead context to Bolna **[FROZEN]**
 
+> **Amended (October 2026), see docs/15 §1:** a field the caller *may* view but
+> the lead has no value for is now sent as an empty string rather than omitted.
+> "Not granted" is unchanged — still absent.
+
 `POST https://api.bolna.ai/call`
 
 ```jsonc

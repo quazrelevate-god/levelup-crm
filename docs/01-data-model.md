@@ -700,3 +700,9 @@ non-trivial to run against.
 Do not build: hardcoded industry taxonomy · runtime `ALTER TABLE` · per-tenant
 schemas or databases · telephony · a workflow engine (events out, n8n
 orchestrates) · billing · hard deletes.
+
+> **Changed (October 2026): billing, for AI-call minutes only.** Once AI calls
+> became something clients pay for by the minute, a prepaid wallet was built:
+> `wallets` and `wallet_transactions`, see `docs/14-wallet.md`. Seat licensing,
+> invoicing and payment collection remain out of scope; money is recorded by
+> the operator, not taken by the product.

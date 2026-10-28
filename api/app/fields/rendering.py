@@ -76,6 +76,15 @@ def _render_date(value: Any, zone: dt.tzinfo) -> str | None:
         text = value.strip()
         if not text:
             return None
+        # A DATE field stores a calendar date, `YYYY-MM-DD`, which has no time
+        # and no timezone (registry `_norm_date`). Reading it as midnight UTC
+        # and converting invented a time ("at 05:30" in Kolkata) and, west of
+        # UTC, moved it to the previous day. Say the date that was stored.
+        if len(text) == 10:
+            try:
+                return dt.date.fromisoformat(text).strftime("%d %B %Y")
+            except ValueError:
+                pass
         try:
             moment = dt.datetime.fromisoformat(text.replace("Z", "+00:00"))
         except ValueError:

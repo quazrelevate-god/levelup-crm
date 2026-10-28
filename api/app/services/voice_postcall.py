@@ -446,10 +446,25 @@ async def summarize_call(call: NormalizedCallResult, summarizer: CallSummarizer)
 #: empty the Call Details page.
 EXTRACTION_SOURCES: tuple[str, ...] = ("extracted_data", "custom_extractions", "agent_extraction")
 
-#: Keys a leaf node uses for the value itself. `subjective` is what Bolna's
-#: own "Call Summary" extraction emits; the rest are the shapes this codebase
-#: and its tests already see.
-_VALUE_KEYS: tuple[str, ...] = ("value", "subjective", "answer", "text", "content", "result")
+#: Keys a leaf node uses for the value itself, in order of preference.
+#:
+#: Bolna's dispositions answer in two parts at once: `objective` is the
+#: pre-defined option the model chose ("fee_link_requested"), `subjective` its
+#: free-text answer ("They asked for the link on WhatsApp…"). The option comes
+#: first because it is the structured fact a mapping, a stage rule or a report
+#: can act on; the prose is the fallback for free-text-only dispositions, where
+#: `objective` is null. `subjective` alone is also what Bolna's own "Call
+#: Summary" extraction emits. The rest are the shapes this codebase and its
+#: tests already see.
+_VALUE_KEYS: tuple[str, ...] = (
+    "value",
+    "objective",
+    "subjective",
+    "answer",
+    "text",
+    "content",
+    "result",
+)
 
 #: Keys that mark a node as a *leaf* rather than a group of extractions.
 _LEAF_MARKERS: tuple[str, ...] = (*_VALUE_KEYS, "confidence", "validation")

@@ -346,3 +346,26 @@ class VoiceCallPurpose(enum.StrEnum):
     #: payment is integrated — the CRM cannot see a payment yet, and the agent
     #: must never claim one has arrived.
     FOLLOWUP_BOOKING = "followup_booking"
+
+
+class WalletTransactionKind(enum.StrEnum):
+    """Why a workspace's wallet balance moved (docs/14).
+
+    Product vocabulary, not workspace taxonomy: these are the only ways money
+    enters or leaves a wallet, and each has its own sign, enforced by a check
+    constraint so the ledger cannot record a top-up that took money away.
+    """
+
+    #: The operator recorded a payment from the client. Always a credit.
+    TOPUP = "TOPUP"
+    #: The operator granted credit without a payment — a goodwill discount.
+    #: Always a credit; kept apart from TOPUP so revenue and concessions never
+    #: blur in a statement.
+    DISCOUNT = "DISCOUNT"
+    #: The operator corrected the balance in either direction. Always carries
+    #: a note saying why.
+    ADJUSTMENT = "ADJUSTMENT"
+    #: A connected AI call was billed. Always a debit. One call may have more
+    #: than one row when Bolna reports its duration late (see
+    #: `WalletService.settle_call`); their sum is the call's price.
+    CALL_CHARGE = "CALL_CHARGE"

@@ -32,6 +32,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     ForeignKey,
     Index,
@@ -189,6 +190,13 @@ class VoiceCallExecution(TenantModel):
     webhook_received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     #: The `CALL_LOGGED` action this call produced on the lead's timeline.
     call_action_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+
+    # --- test calls (migration 0018) ----------------------------------------
+    #: Placed to a tester's phone with this lead's context, to hear what the
+    #: lead would hear. Recorded like any call, but never moves the stage.
+    is_test: Mapped[bool] = mapped_column(
+        Boolean(), nullable=False, default=False, server_default=text("false")
+    )
 
     lead = relationship("Lead")
 

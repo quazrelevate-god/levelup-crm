@@ -175,6 +175,11 @@ class LeadService:
         return str(value) if value not in (None, "") else None
 
     @property
+    def projection(self) -> FieldProjectionService:
+        """The caller's field projection, for services that compose this one."""
+        return self._projection
+
+    @property
     def last_validation(self) -> Any:
         """The last `ValidatedValues` this service produced, or None.
 
@@ -285,6 +290,14 @@ class LeadService:
             "labels": validator.project_labels(visible),
             "last_action_at": (lead.last_action_at.isoformat() if lead.last_action_at else None),
             "created_at": lead.created_at.isoformat(),
+            # Approved for AI calling (docs/15). Not a field value, so not
+            # subject to projection: it says who may be dialled, not who they are.
+            "voice_approved_at": (
+                lead.voice_approved_at.isoformat() if lead.voice_approved_at else None
+            ),
+            "voice_approved_by_id": (
+                str(lead.voice_approved_by_id) if lead.voice_approved_by_id else None
+            ),
         }
 
     # --- writes ------------------------------------------------------------

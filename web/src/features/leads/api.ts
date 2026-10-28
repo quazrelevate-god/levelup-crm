@@ -20,6 +20,7 @@ import type {
   Page,
   RenderedTemplate,
   TemplateChannel,
+  VoiceApproval,
   VoiceCallTrigger,
   VoiceCallTriggerResult,
 } from '@/api/types'
@@ -61,7 +62,8 @@ export function useLead(workspaceId: string, leadId: string | null) {
  * summary is still waiting for Bolna's upgrade. The caller cannot work that
  * out before this hook runs, so React Query passes it the query instead.
  */
-type TimelinePoll = number | false | ((query: { state: { data?: Page<LeadAction> } }) => number | false)
+type TimelinePoll =
+  number | false | ((query: { state: { data?: Page<LeadAction> } }) => number | false)
 
 export function useLeadTimeline(
   workspaceId: string,
@@ -164,6 +166,15 @@ export function useDeleteLead(workspaceId: string) {
 export function useAddNote(workspaceId: string) {
   return useLeadMutation(workspaceId, ({ leadId, body }: { leadId: string; body: string }) =>
     api.post<LeadAction>(`${base(workspaceId)}/leads/${leadId}/notes`, { body }),
+  )
+}
+
+/** Approve a lead for AI calling, or take the approval back (docs/15). */
+export function useSetVoiceApproval(workspaceId: string) {
+  return useLeadMutation(
+    workspaceId,
+    ({ leadId, approved }: { leadId: string; approved: boolean }) =>
+      api.put<VoiceApproval>(`${base(workspaceId)}/voice/approvals/${leadId}`, { approved }),
   )
 }
 

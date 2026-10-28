@@ -156,6 +156,12 @@ class Settings(BaseSettings):
     #: than inventing a customer record. Only honoured when the workspace's
     #: identity field is its phone field; goes through the one create path.
     bolna_create_missing_leads: bool = False
+    #: When AI calls may be placed, as `HH:MM-HH:MM` in each **workspace's own
+    #: timezone** (rule 10). India's telemarketing rules allow commercial calls
+    #: between 09:00 and 21:00, so that is the default. A call requested outside
+    #: the window is refused before anything is written or sent. Empty disables
+    #: the check, which only a test suite should do.
+    voice_calling_hours: str = "09:00-21:00"
 
     #: Base URL of the LevelUp Learning knowledge base, e.g.
     #: https://kb-production.up.railway.app. When set, the voice trigger reads
@@ -197,6 +203,15 @@ class Settings(BaseSettings):
             return value
         text = value.strip()
         return json.loads(text) if text else []
+
+    @field_validator("voice_calling_hours")
+    @classmethod
+    def _check_calling_hours(cls, value: str) -> str:
+        """`HH:MM-HH:MM` or empty. A typo fails at boot, not on a lead's phone."""
+        from app.services.voice_hours import parse_calling_hours
+
+        parse_calling_hours(value)  # raises ValueError with the reason
+        return value.strip()
 
     @field_validator("database_url")
     @classmethod

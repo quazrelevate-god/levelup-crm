@@ -26,6 +26,8 @@ import { SystemStatusPage } from '@/routes/SystemStatusPage'
 import { TasksPage } from '@/routes/TasksPage'
 import { TemplatesPage } from '@/routes/TemplatesPage'
 import { VoiceExtractionSettingsPage } from '@/routes/VoiceExtractionSettingsPage'
+import { WalletPage } from '@/routes/WalletPage'
+import { VoiceVariablesPage } from '@/routes/VoiceVariablesPage'
 import { WorkspacePickerPage } from '@/routes/WorkspacePickerPage'
 
 export const router = createBrowserRouter([
@@ -78,6 +80,8 @@ export const router = createBrowserRouter([
           { path: 'dashboards', element: <DashboardSettingsPage /> },
           { path: 'integrations', element: <IntegrationsPage /> },
           { path: 'voice-extraction', element: <VoiceExtractionSettingsPage /> },
+          { path: 'voice-variables', element: <VoiceVariablesPage /> },
+          { path: 'wallet', element: <WalletPage /> },
           { path: 'system', element: <SystemStatusPage /> },
         ],
       },

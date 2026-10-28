@@ -37,6 +37,11 @@ a lead unless `BOLNA_CREATE_MISSING_LEADS` is explicitly on (see
 with a safe fallback, and written as exactly one `CALL_LOGGED` action marked
 `source: AI_CALL` whose body is that summary.
 
+**Metered workspaces pay per connected minute** (docs/14). `trigger` refuses
+to dial when the wallet cannot cover a minute; every terminal delivery settles
+what the call still owes. Both go through `WalletService`, which leaves a
+workspace without a wallet unmetered.
+
 **Write-back is idempotent at two levels.** `voice_call_executions.completed_at`
 gates the whole operation, and `VoiceContextService.update_last_call_summary` is
 independently idempotent on `external_id`. Either alone would be enough for the
@@ -50,9 +55,12 @@ import dataclasses
 import datetime as dt
 import logging
 import uuid
+from collections.abc import Callable
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from app.errors import api_error, not_found
+from app.fields.registry import FieldValueError, ValidationContext, normalise_phone
 from app.fields.rendering import render_for_voice
 from app.integrations.bolna import BolnaCallRequest, BolnaClient, BolnaSettings
 from app.models.enums import (
@@ -75,6 +83,7 @@ from app.services.program_context import ProgramContextService
 from app.services.voice_context import VoiceContext, VoiceContextService
 from app.services.voice_extraction import ExtractionOutcome, VoiceExtractionService
 from app.services.voice_followup import OPENING_KEY, PURPOSE_KEY, opening_line
+from app.services.voice_hours import CallingHours, within_calling_hours
 from app.services.voice_postcall import (
     CALLER_PHONE_PATHS,
     DIRECTION_PATHS,
@@ -94,6 +103,7 @@ from app.services.voice_postcall import (
     summarize_call,
 )
 from app.services.voice_settings import VOICE_OUTCOME_STAGES, read_outcome_stages
+from app.services.wallet import WalletService
 from app.tenancy.session import ScopedSession
 
 logger = logging.getLogger(__name__)
@@ -172,6 +182,25 @@ class TriggerOutcome:
 
 
 @dataclasses.dataclass(slots=True)
+class CallPreview:
+    """What a call to this lead would carry, without placing it (docs/15)."""
+
+    lead_id: uuid.UUID
+    #: The number a real call would dial; `None` when the lead has none.
+    recipient_phone: str | None
+    agent_id: str | None
+    user_data: dict[str, Any]
+    #: Variables that would reach the agent empty: what it will *not* know.
+    blank_variables: list[str]
+    previous_call_summary: str | None
+    call_count: int
+
+
+#: Shown in a preview where a real call carries a fresh idempotency key.
+PREVIEW_IDEMPOTENCY = "(set when the call is placed)"
+
+
+@dataclasses.dataclass(slots=True)
 class WebhookOutcome:
     """The result of processing one Bolna delivery.
 
@@ -217,6 +246,8 @@ class VoiceCallService:
         create_missing_leads: bool = False,
         summarizer: CallSummarizer | None = None,
         program_context: ProgramContextService | None = None,
+        calling_hours: CallingHours | None = None,
+        clock: Callable[[], dt.datetime] | None = None,
     ) -> None:
         self._session = session
         self._workspace = workspace
@@ -237,6 +268,10 @@ class VoiceCallService:
         self._program_context = program_context or ProgramContextService(None)
         # No I/O and no configuration: it only reshapes what is already loaded.
         self._lead_context = LeadContextBuilder()
+        # `None` means no restriction. The clock is injectable so the window
+        # can be tested at a fixed moment instead of whenever the suite runs.
+        self._calling_hours = calling_hours
+        self._clock: Callable[[], dt.datetime] = clock or (lambda: dt.datetime.now(dt.UTC))
 
     # --- configuration ------------------------------------------------------
 
@@ -253,6 +288,29 @@ class VoiceCallService:
                 "This deployment has no Bolna credentials configured",
             )
         return self._client, self._config
+
+    def _ensure_calling_hours(self) -> None:
+        """Refuse a call outside the permitted window, in the workspace's time."""
+        if self._calling_hours is None:
+            return
+        timezone = self._workspace.timezone
+        now = self._clock()
+        if within_calling_hours(self._calling_hours, timezone=timezone, now=now):
+            return
+        start, end = self._calling_hours
+        local = now.astimezone(ZoneInfo(timezone))
+        raise api_error(
+            422,
+            "outside_calling_hours",
+            f"AI calls can only be placed between {start:%H:%M} and {end:%H:%M} "
+            f"({timezone}). It is {local:%H:%M} there now.",
+            start=f"{start:%H:%M}",
+            end=f"{end:%H:%M}",
+            timezone=timezone,
+        )
+
+    def _wallet(self) -> WalletService:
+        return WalletService(self._session, workspace=self._workspace)
 
     # --- outbound -----------------------------------------------------------
 
@@ -312,6 +370,13 @@ class VoiceCallService:
         )
 
         user_data: dict[str, Any] = dict(rendered)
+        # Every field this caller may see is sent, filled or not (docs/15). An
+        # absent key is left in the agent's prompt as the literal `{age}`, which
+        # a model can read as something to fill in; an empty one reads as "not
+        # known", which the agent is told never to guess past. Fields the
+        # caller may not view stay absent — the projection decides, as always.
+        for key in self._leads.projection.visible_field_keys([field.key for field in fields]):
+            user_data.setdefault(key, "")
         user_data.update(
             {
                 # Frozen by contract §4.
@@ -390,6 +455,7 @@ class VoiceCallService:
         *,
         agent_id: str | None = None,
         purpose: VoiceCallPurpose | None = None,
+        test_phone: str | None = None,
     ) -> TriggerOutcome:
         """Place a Bolna call for an existing lead.
 
@@ -416,6 +482,10 @@ class VoiceCallService:
                 "voice_agent_not_configured",
                 "No Bolna agent id configured for this deployment",
             )
+        # Before anything is written or sent: a refused call leaves no QUEUED
+        # row behind and costs Bolna nothing.
+        self._ensure_calling_hours()
+        await self._wallet().ensure_can_call()
 
         context = await self._context.get_context(lead)
         # Only the phone field, with no fallback to `identity_value`. That
@@ -425,6 +495,11 @@ class VoiceCallService:
         # where a call placed to "Perumal" is a vendor error message nobody
         # can trace back to a CRM configuration choice.
         recipient = context.phone
+        # A test call (docs/15) carries this lead's context to the tester's own
+        # phone instead. Everything else — memory, wallet, calling hours — is
+        # exactly a real call's, which is the point of testing it.
+        if test_phone is not None:
+            recipient = self._test_recipient(test_phone)
         if not recipient:
             raise api_error(422, "lead_has_no_phone", "That lead has no phone number")
 
@@ -440,6 +515,7 @@ class VoiceCallService:
             idempotency_key=idempotency_key,
             status=VoiceCallStatus.QUEUED,
             context_sent=user_data,
+            is_test=test_phone is not None,
         )
         self._session.add(row)
         await self._session.flush()
@@ -472,6 +548,44 @@ class VoiceCallService:
             context=context,
             user_data=user_data,
             error=result.error,
+        )
+
+    def _test_recipient(self, phone: str) -> str:
+        """The tester's number, normalised with the workspace's country code."""
+        context = ValidationContext(
+            default_country_code=self._workspace.default_country_code,
+            currency=self._workspace.currency,
+            timezone=self._workspace.timezone,
+        )
+        try:
+            normalised = normalise_phone(phone, context)
+        except FieldValueError as exc:
+            raise api_error(422, "invalid_test_phone", exc.message) from exc
+        if not normalised:
+            raise api_error(422, "invalid_test_phone", "Enter the phone number to call")
+        return normalised
+
+    async def preview(self, lead: Lead, *, purpose: VoiceCallPurpose | None = None) -> CallPreview:
+        """Exactly what a call to this lead would send, with nothing sent.
+
+        Builds `user_data` through the same `build_user_data` a real trigger
+        uses, so what an operator checks here is what the agent will get. No
+        row is written, Bolna is not contacted, and no wallet, calling-hours
+        or configuration check applies — looking costs nothing.
+        """
+        context = await self._context.get_context(lead)
+        user_data = await self.build_user_data(
+            context, idempotency_key=uuid.UUID(int=0), purpose=purpose
+        )
+        user_data["crm_idempotency"] = PREVIEW_IDEMPOTENCY
+        return CallPreview(
+            lead_id=lead.id,
+            recipient_phone=context.phone,
+            agent_id=self._config.agent_id if self._config else None,
+            user_data=user_data,
+            blank_variables=sorted(key for key, value in user_data.items() if value in ("", None)),
+            previous_call_summary=context.last_call_summary,
+            call_count=context.call_count,
         )
 
     # --- inbound ------------------------------------------------------------
@@ -1018,7 +1132,13 @@ class VoiceCallService:
         # transcript reads as unanswered, and the completed result seconds
         # later proves there was a conversation. `correcting=True` lets that
         # one case move the lead out of the unanswered stage.
-        await self._move_stage_for_outcome(lead, call, correcting=True)
+        # A test call never moves a stage: it says nothing about the lead.
+        if not row.is_test:
+            await self._move_stage_for_outcome(lead, call, correcting=True)
+
+        # A duration that only arrived now is billed now; one already billed is
+        # not billed again (`settle_call` charges only what is still owed).
+        await self._wallet().settle_call(row)
 
         # When the authoritative result arrived.
         row.completed_at = now
@@ -1148,6 +1268,7 @@ class VoiceCallService:
                     "call_status": call.status or None,
                     "summary_source": summary.source,
                     "has_transcript": call.transcript is not None,
+                    **({"test": True} if row.is_test else {}),
                 },
             )
             await self._session.flush()
@@ -1184,11 +1305,16 @@ class VoiceCallService:
             extraction = await extractor.apply(payload, lead, extraction_writer)
 
         # The stage the outcome implies, in its own AUTOMATION changeset so an
-        # operator can undo the move without undoing the call log.
-        await self._move_stage_for_outcome(lead, call)
+        # operator can undo the move without undoing the call log. Never for a
+        # test call: it was a tester on the phone, not the lead.
+        if not row.is_test:
+            await self._move_stage_for_outcome(lead, call)
 
         row.completed_at = now
         row.status = VoiceCallStatus.FAILED if call.failed else VoiceCallStatus.COMPLETED
+        # In the same transaction as the write-back, so a call is never logged
+        # without being billed or billed without being logged.
+        await self._wallet().settle_call(row)
         await self._session.commit()
 
         logger.info(

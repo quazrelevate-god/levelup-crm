@@ -36,6 +36,23 @@ os.environ.setdefault("ARGON2_TIME_COST", "1")
 # and testing the real number is worth more than testing a stand-in.
 # Each test gets its own FakeRedis, so counters never leak between tests.
 os.environ.setdefault("REFRESH_RATE_LIMIT_IP_ATTEMPTS", "20")
+# The suite places calls at whatever hour it happens to run. Calling-hours
+# enforcement has its own tests (test_voice_calling_hours.py), which switch it
+# back on with a fixed clock.
+os.environ.setdefault("VOICE_CALLING_HOURS", "")
+
+# Credentials that reach real services are *forced* empty, not defaulted:
+# pydantic-settings also reads `api/.env`, and a developer's real keys there
+# must never reach a test. On 2026-10-24 a real Bolna key in `.env` let one
+# test place a real call to a fixture phone number. Environment variables win
+# over the `.env` file, so an empty value here means "not configured".
+os.environ["BOLNA_API_KEY"] = ""
+os.environ["BOLNA_AGENT_ID"] = ""
+os.environ["SMTP_HOST"] = ""
+os.environ["SMTP_PASSWORD"] = ""
+os.environ["SENTRY_DSN"] = ""
+
+from urllib.parse import urlparse
 
 import pytest
 from fastapi import FastAPI
@@ -53,7 +70,27 @@ from app.auth.passwords import PasswordHasherService
 from app.config import Settings, get_settings
 from app.db import Base
 from app.dependencies import get_session
+from app.integrations.bolna import BolnaCallRequest, HttpxBolnaClient
 from app.main import create_app
+
+# The second layer: even if a real key ever arrived some other way, the real
+# Bolna client refuses to dial from the test suite. Tests use
+# `RecordingBolnaClient`; the few that exercise the real client's failure path
+# point it at a `.invalid` host, which can never resolve.
+_real_place_call = HttpxBolnaClient.place_call
+
+
+async def _never_dial_from_tests(self: HttpxBolnaClient, request: BolnaCallRequest) -> object:
+    host = urlparse(self._base_url).hostname or ""
+    if not host.endswith(".invalid"):
+        raise AssertionError(
+            f"A test tried to place a real Bolna call via {host!r}. "
+            "Install RecordingBolnaClient on app.state.bolna_client instead."
+        )
+    return await _real_place_call(self, request)
+
+
+HttpxBolnaClient.place_call = _never_dial_from_tests  # type: ignore[method-assign]
 
 POSTGRES_IMAGE = "postgres:16-alpine"
 

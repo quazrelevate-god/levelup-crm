@@ -134,6 +134,14 @@ M9_TABLES = {"dashboards"}
 # than tenant data, because a person exists across workspaces.
 M11_TABLES = {"password_reset_tokens"}
 
+# The voice integration (docs/09-13). Not an M-numbered milestone, and missing
+# from this list until the wallet work found it: the per-lead call digest, one
+# row per call attempt, and the admin's disposition-to-field mappings.
+VOICE_TABLES = {"voice_call_contexts", "voice_call_executions", "voice_extraction_mappings"}
+
+# Prepaid AI-call wallets (docs/14): the balance and its append-only ledger.
+BILLING_TABLES = {"wallets", "wallet_transactions"}
+
 
 def test_the_schema_defines_exactly_the_tables_the_landed_milestones_own() -> None:
     """No table exists before the milestone that owns it."""
@@ -149,6 +157,8 @@ def test_the_schema_defines_exactly_the_tables_the_landed_milestones_own() -> No
         | M10_TABLES
         | M9_TABLES
         | M11_TABLES
+        | VOICE_TABLES
+        | BILLING_TABLES
     )
 
 

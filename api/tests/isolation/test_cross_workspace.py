@@ -482,6 +482,12 @@ M10_COLLECTION_ROUTES: list[str] = [
     "/settings/intake-log",
 ]
 
+# docs/14 — the wallet. Read-only for members; their isolation (404 for another
+# workspace's wallet, no foreign figures in a statement) is asserted in
+# `tests/test_wallet.py::test_another_workspaces_wallet_is_a_404_and_never_leaks`,
+# where the wallets those checks need are set up.
+WALLET_COLLECTION_ROUTES: list[str] = ["/wallet", "/wallet/transactions"]
+
 M10_COLLECTION_WRITE_ROUTES: list[tuple[str, str]] = [
     ("POST", "/settings/api-keys"),
     ("POST", "/settings/webhooks"),
@@ -497,6 +503,61 @@ _M10_BODIES: dict[str, dict[str, object]] = {
     "/settings/api-keys": {
         "name": "Smuggled",
         "permission_template_id": "00000000-0000-4000-8000-000000000001",
+    },
+}
+
+# Voice — the CRM side of the Bolna integration (docs/09-13). Not an M-numbered
+# milestone, and missing from this matrix until the coverage guard below caught
+# it. A call row holds a transcript of a customer talking, so a leaked call id
+# is a leaked conversation. The probes live in `test_cross_workspace_voice.py`.
+VOICE_ID_ROUTES: list[tuple[str, str]] = [
+    ("GET", "/voice/context/{lead_id}"),
+    ("PUT", "/voice/context/{lead_id}/summary"),
+    # docs/15: approving a lead for AI calling decides who gets dialled.
+    ("PUT", "/voice/approvals/{lead_id}"),
+    ("GET", "/voice/calls/{call_id}"),
+    ("GET", "/voice/extraction-mappings/{mapping_id}"),
+    ("PATCH", "/voice/extraction-mappings/{mapping_id}"),
+    ("DELETE", "/voice/extraction-mappings/{mapping_id}"),
+]
+
+VOICE_COLLECTION_ROUTES: list[str] = [
+    "/voice/calls",
+    "/voice/extraction-mappings",
+]
+
+#: `POST /voice/calls` takes its lead by reference (an id or a phone number) in
+#: the body, so it is probed both under B's path and with B's lead aimed at A.
+VOICE_COLLECTION_WRITE_ROUTES: list[tuple[str, str]] = [
+    ("POST", "/voice/calls"),
+    # docs/15: what a call would send, built for one lead. Takes the lead by
+    # reference exactly like placing a call, so it is probed the same way.
+    ("POST", "/voice/calls/preview"),
+    ("POST", "/voice/extraction-mappings"),
+]
+
+#: docs/15: the variable catalogue — the workspace's own field names plus the
+#: reserved ones. No ids to leak, but another workspace's field names would be.
+VOICE_CATALOGUE_ROUTES: list[tuple[str, str]] = [("GET", "/voice/variables")]
+
+#: A lookup by natural key rather than id: B's phone number, asked of A.
+VOICE_LOOKUP_ROUTES: list[tuple[str, str]] = [("GET", "/voice/context")]
+
+#: The completion webhook. Authenticated by an API key rather than a member,
+#: so its probes are a key from the wrong workspace and a payload naming
+#: another workspace's execution or lead.
+VOICE_MACHINE_ROUTES: list[tuple[str, str]] = [("POST", "/voice/executions")]
+
+_VOICE_BODIES: dict[str, dict[str, object]] = {
+    "/voice/approvals/{lead_id}": {"approved": True},
+    "/voice/context/{lead_id}/summary": {
+        "summary": "Smuggled by an outsider.",
+        "external_id": "smuggled-1",
+    },
+    "/voice/extraction-mappings/{mapping_id}": {"min_confidence": 0.1},
+    "/voice/extraction-mappings": {
+        "disposition_name": "Smuggled",
+        "target_field_key": "name",
     },
 }
 
@@ -936,6 +997,13 @@ def test_the_matrix_covers_every_workspace_scoped_route(app: FastAPI) -> None:
     declared.update(M9_ID_ROUTES)
     declared.update(("GET", route) for route in M9_COLLECTION_ROUTES)
     declared.update({("GET", "/reports/breakdown"), ("POST", "/dashboards")})
+    declared.update(VOICE_ID_ROUTES)
+    declared.update(("GET", route) for route in VOICE_COLLECTION_ROUTES)
+    declared.update(VOICE_COLLECTION_WRITE_ROUTES)
+    declared.update(VOICE_LOOKUP_ROUTES)
+    declared.update(VOICE_MACHINE_ROUTES)
+    declared.update(VOICE_CATALOGUE_ROUTES)
+    declared.update(("GET", route) for route in WALLET_COLLECTION_ROUTES)
 
     mounted: set[tuple[str, str]] = set()
     for path, operations in app.openapi()["paths"].items():

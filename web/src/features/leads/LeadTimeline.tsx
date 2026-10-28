@@ -214,7 +214,11 @@ export function LeadTimeline({
             >
               <div className="mb-1 flex flex-wrap items-center gap-2">
                 <Badge variant="outline">
-                  {isAiCall(action) ? 'AI Call' : (KIND_LABELS[action.kind] ?? action.kind)}
+                  {isAiCall(action)
+                    ? action.payload.test === true
+                      ? 'AI Call · Test'
+                      : 'AI Call'
+                    : (KIND_LABELS[action.kind] ?? action.kind)}
                 </Badge>
                 <span className="text-muted-foreground text-xs">
                   {new Date(action.performed_at).toLocaleString()} ·{' '}

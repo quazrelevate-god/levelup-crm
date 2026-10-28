@@ -404,6 +404,10 @@ export interface Lead {
   readonly labels: Record<string, OptionLabel | readonly OptionLabel[]>
   readonly last_action_at: string | null
   readonly created_at: string
+  /** Approved for AI calling (docs/15). Batches dial approved leads only. */
+  readonly voice_approved_at: string | null
+  /** The membership that switched it on. */
+  readonly voice_approved_by_id: string | null
 }
 
 export type ActionKind =
@@ -935,6 +939,16 @@ export interface Dashboard {
  * that payload would be reimplementing the permission projection outside the
  * one place that owns it.
  */
+/** `PUT /workspaces/{id}/voice/approvals/{lead_id}` — the per-lead switch. */
+export interface VoiceApproval {
+  readonly lead_id: string
+  readonly approved: boolean
+  readonly approved_at: string | null
+  readonly approved_by_id: string | null
+  /** False when the switch was already where it was asked to be. */
+  readonly changed: boolean
+}
+
 export interface VoiceCallTrigger {
   readonly lead_id?: string
   readonly phone?: string
@@ -950,6 +964,12 @@ export interface VoiceCallTrigger {
    * finished call is refused with `followup_not_available`.
    */
   readonly followup?: boolean
+  /**
+   * A test call (docs/15): dial this number instead of the lead's, carrying the
+   * lead's full context, to hear exactly what the lead would hear. Recorded and
+   * charged like any call; never moves the lead's stage.
+   */
+  readonly test_phone?: string
 }
 
 /**
@@ -963,6 +983,8 @@ export interface VoiceCallTrigger {
 export interface VoiceCallTriggerResult {
   /** The CRM's own row id for the attempt. */
   readonly call_id: string
+  /** True for a test call to a tester's phone. */
+  readonly is_test: boolean
   readonly lead_id: string
   /** Bolna's execution id — the join key for the completion webhook. */
   readonly execution_id: string | null

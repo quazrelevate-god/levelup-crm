@@ -61,6 +61,7 @@ function CallRow({ call }: { readonly call: VoiceCallSummary }) {
         </div>
 
         <div className="flex items-center gap-3">
+          {call.is_test ? <Badge variant="secondary">Test</Badge> : null}
           <Badge variant={failed ? 'destructive' : 'outline'}>
             {formatCallStatus(call.bolna_status ?? call.status)}
           </Badge>

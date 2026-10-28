@@ -396,14 +396,17 @@ async def test_a_field_the_template_cannot_view_never_reaches_bolna(
 ) -> None:
     """Contract §3's PII control, asserted at the boundary.
 
-    The trigger builds `user_data` from `VoiceContextService.get_context`, whose
-    values are already View-projected. A caller whose template grants no View on
-    a field must not be able to launder it out through the voice payload.
-    """
-    headers = await _admin(api, workspace)
-    lead = await _create_lead(api, workspace)
+    A caller whose template grants no View on a field must not be able to
+    launder it out through the voice payload — neither its value nor, since
+    every viewable field is now sent even when empty (docs/15), its name.
 
-    # A field nobody has been granted anything on.
+    Placed by a **Caller**, on a lead that **holds a value** in the field. This
+    test used to place the call as the owner, whose admin template may view
+    every field, on a lead with nothing in it — so it passed whatever the
+    projection did.
+    """
+    owner = await _admin(api, workspace)
+    lead = await _create_lead(api, workspace)
     secret_field = LeadField(
         workspace_id=workspace.id,
         key="internal_note",
@@ -412,11 +415,27 @@ async def test_a_field_the_template_cannot_view_never_reaches_bolna(
         sort_order=99,
     )
     db_session.add(secret_field)
+    await db_session.flush()
+    stored = await db_session.get(Lead, uuid.UUID(lead["id"]))
+    assert stored is not None
+    stored.values = {**(stored.values or {}), "internal_note": "VIP discount, do not share"}
     await db_session.commit()
 
-    response = await _trigger(api, workspace, headers, lead_id=lead["id"])
-    assert response.status_code == 200
-    assert "internal_note" not in bolna.last.user_data
+    caller = workspace.members["caller"]
+    assigned = await api.patch(
+        workspace.path(f"/leads/{lead['id']}"),
+        headers=owner,
+        json={"assignee_id": str(caller.membership.id)},
+    )
+    assert assigned.status_code == 200, assigned.text
+    await login(api, caller)
+
+    response = await _trigger(api, workspace, caller.auth, lead_id=lead["id"])
+
+    assert response.status_code == 200, response.text
+    sent = bolna.last.user_data
+    assert "internal_note" not in sent
+    assert "VIP discount" not in repr(sent)
 
 
 # --- credentials ------------------------------------------------------------
@@ -1096,6 +1115,19 @@ def test_render_for_voice_renders_an_epoch_as_a_spoken_date() -> None:
     rendered = render_for_voice({"last_contact": 1755129600}, [when], timezone_name="UTC")
     assert "1755129600" not in rendered["last_contact"]
     assert "2025" in rendered["last_contact"]
+
+
+@pytest.mark.parametrize("zone", ["Asia/Kolkata", "UTC", "America/Los_Angeles", "Pacific/Auckland"])
+def test_a_calendar_date_is_spoken_as_stored_in_every_timezone(zone: str) -> None:
+    """Regression: `2026-10-20` was read as midnight UTC and converted.
+
+    In Kolkata that became "20 October 2026 at 05:30" — a time nobody entered,
+    which an agent could read out as when the lead applied. West of UTC it was
+    worse: the date itself moved back a day.
+    """
+    applied = _field("applied_on", LeadFieldType.DATE)
+    rendered = render_for_voice({"applied_on": "2026-10-20"}, [applied], timezone_name=zone)
+    assert rendered["applied_on"] == "20 October 2026"
 
 
 def test_render_for_voice_keeps_a_value_whose_field_is_gone() -> None:

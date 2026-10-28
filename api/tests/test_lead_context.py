@@ -31,12 +31,13 @@ import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
-from tests.factories import WorkspaceFixture, build_workspace, login
+from tests.factories import WorkspaceFixture, add_member, build_workspace, login
 
 from app.auth.passwords import PasswordHasherService
 from app.integrations.bolna import BolnaSettings, RecordingBolnaClient
 from app.models.enums import LeadFieldType
 from app.models.field import LeadField
+from app.models.lead import Lead
 from app.services.lead_context import (
     MAX_CONTEXT_CHARS,
     LeadContextBuilder,
@@ -511,18 +512,20 @@ async def test_the_caller_context_reaches_the_bolna_request(
 async def test_a_field_without_view_permission_never_reaches_the_context(
     api: AsyncClient,
     db_session: AsyncSession,
+    hasher: PasswordHasherService,
     ws: WorkspaceFixture,
     bolna: RecordingBolnaClient,
 ) -> None:
     """The projection chokepoint, checked on this path like every other.
 
-    Mirrors the existing guard in `test_bolna_integration.py`: a field nobody
-    has been granted anything on must not be laundered out through the voice
-    payload, and so cannot appear in the caller context either.
+    Mirrors the guard in `test_bolna_integration.py`: a field the caller's
+    template cannot View must not be laundered out through the voice payload,
+    and so cannot appear in the caller context either. Placed by a Caller on a
+    lead that holds a value in the field — as the owner (an admin, who may view
+    every field) on an empty field, it could not fail.
     """
     await login(api, ws.owner)
     lead = await _lead_with_a_goal(api, ws, "A career change")
-
     ungranted = LeadField(
         workspace_id=ws.id,
         key="internal_note",
@@ -531,14 +534,31 @@ async def test_a_field_without_view_permission_never_reaches_the_context(
         sort_order=99,
     )
     db_session.add(ungranted)
+    await db_session.flush()
+    stored = await db_session.get(Lead, uuid.UUID(str(lead["id"])))
+    assert stored is not None
+    stored.values = {**(stored.values or {}), "internal_note": "VIP discount, do not share"}
     await db_session.commit()
 
-    triggered = await api.post(
-        ws.path("/voice/calls"), headers=ws.owner.auth, json={"lead_id": lead["id"]}
+    caller = await add_member(
+        db_session, hasher, ws, key="caller", email="caller@leadctx.example", template_name="Caller"
     )
+    assigned = await api.patch(
+        ws.path(f"/leads/{lead['id']}"),
+        headers=ws.owner.auth,
+        json={"assignee_id": str(caller.membership.id)},
+    )
+    assert assigned.status_code == 200, assigned.text
+    await login(api, caller)
+
+    triggered = await api.post(
+        ws.path("/voice/calls"), headers=caller.auth, json={"lead_id": lead["id"]}
+    )
+
     assert triggered.status_code == 200, triggered.text
     sent = bolna.last.user_data
     assert "internal_note" not in sent
+    assert "VIP discount" not in repr(sent)
     assert "Internal Note" not in sent["crm_lead_context"]
 
 

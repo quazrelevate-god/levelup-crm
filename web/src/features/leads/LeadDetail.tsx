@@ -33,6 +33,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { AiCallSummaryCard } from '@/features/calls/AiCallSummaryCard'
 import type { VoiceCallSummary } from '@/features/calls/api'
@@ -49,10 +50,12 @@ import {
   useRecordMessage,
   useRenderTemplate,
   useRefreshLeadData,
+  useSetVoiceApproval,
   useTriggerVoiceCall,
   useUpdateLead,
 } from '@/features/leads/api'
 import { LeadTimeline } from '@/features/leads/LeadTimeline'
+import { AgentTestPanel } from '@/features/voice/AgentTestPanel'
 import { StarRating } from '@/features/leads/StarRating'
 import { LeadLabels } from '@/features/work/LeadLabels'
 import { LeadTasks } from '@/features/work/LeadTasks'
@@ -98,6 +101,51 @@ function awaitingSummaryUpgrade(items: readonly LeadAction[] | undefined): boole
  *   `summary_source` FALLBACK  finished, Bolna's summary may still upgrade it
  *   otherwise                  settled, stop
  */
+/**
+ * Approved for AI calling (docs/15). Batch calls dial approved leads only, so
+ * this is the look before a lead is called: check what the agent will know
+ * below, then switch it on. The "AI Call" button does not need it — pressing
+ * that is choosing this lead there and then.
+ */
+function VoiceApprovalSwitch({
+  approvedAt,
+  pending,
+  error,
+  onChange,
+}: {
+  readonly approvedAt: string | null
+  readonly pending: boolean
+  readonly error: Error | null
+  readonly onChange: (approved: boolean) => void
+}) {
+  const approved = approvedAt !== null
+  return (
+    <div className="border-border/60 space-y-1 rounded-xl border p-3" data-testid="voice-approval">
+      <div className="flex items-center justify-between gap-3">
+        <Label htmlFor="voice-approval" className="text-sm font-medium">
+          Approved for AI calling
+        </Label>
+        <Switch
+          id="voice-approval"
+          checked={approved}
+          disabled={pending}
+          onCheckedChange={onChange}
+        />
+      </div>
+      <p className="text-muted-foreground text-xs">
+        {approved
+          ? `Approved ${new Date(approvedAt).toLocaleString()}. Batch calls will include this lead.`
+          : 'Batch calls skip this lead until it is approved. Check what the agent will know below first.'}
+      </p>
+      {error ? (
+        <p role="alert" className="text-destructive text-xs">
+          {error instanceof ApiError ? error.message : 'The approval could not be saved.'}
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
 function callNeedsWatching(call: VoiceCallSummary | undefined): boolean {
   if (!call) return false
   // A call nobody could still be waiting on must not poll for as long as the
@@ -136,6 +184,18 @@ const ACTION_MESSAGES: Record<string, string> = {
 
 function message(cause: unknown): string {
   if (!(cause instanceof ApiError)) return 'That action failed.'
+  // The wallet refuses a call it cannot cover (docs/14). Say how short it is,
+  // in the wallet's own currency, rather than only that it is.
+  if (cause.code === 'wallet_insufficient_balance') {
+    const { balance, required, currency } = cause.detail
+    if (typeof balance === 'string' && typeof required === 'string') {
+      const unit = typeof currency === 'string' ? `${currency} ` : ''
+      return (
+        `Not enough call balance: the wallet has ${unit}${balance} and a call needs at least ` +
+        `${unit}${required}. Recharge the wallet to call again.`
+      )
+    }
+  }
   const fields = cause.detail.fields
   if (fields && typeof fields === 'object' && !Array.isArray(fields)) {
     const parts = Object.entries(fields as Record<string, string>).map(
@@ -211,6 +271,7 @@ export function LeadDetail({
   const addNote = useAddNote(workspaceId)
   const logCall = useLogCall(workspaceId)
   const triggerVoiceCall = useTriggerVoiceCall(workspaceId)
+  const setVoiceApproval = useSetVoiceApproval(workspaceId)
   const logCustom = useLogCustomAction(workspaceId)
   const recordMessage = useRecordMessage(workspaceId)
   const renderTemplate = useRenderTemplate(workspaceId)
@@ -317,16 +378,24 @@ export function LeadDetail({
    * response has to be read rather than assumed — otherwise a refused call
    * shows a cheerful "started" message and nobody dials anybody.
    */
-  const startVoiceCall = async (followup = false) => {
+  const startVoiceCall = async (followup = false, testPhone?: string) => {
     setError(null)
     setVoiceNotice(null)
     try {
-      const result = await triggerVoiceCall.mutateAsync({ lead_id: lead.id, followup })
+      const result = await triggerVoiceCall.mutateAsync({
+        lead_id: lead.id,
+        followup,
+        ...(testPhone ? { test_phone: testPhone } : {}),
+      })
       if (result.error !== null || result.execution_id === null) {
         setError(result.error ?? 'Bolna accepted the request but returned no call id.')
         return
       }
-      const kind = followup ? 'Follow-up call' : 'AI call'
+      const kind = result.is_test
+        ? `Test call to ${result.recipient_phone}`
+        : followup
+          ? 'Follow-up call'
+          : 'AI call'
       setVoiceNotice(
         `${kind} started · ${result.bolna_status ?? result.status}` +
           (result.call_count > 0 ? ` · call ${result.call_count + 1} for this lead` : '') +
@@ -500,6 +569,13 @@ export function LeadDetail({
       <section className="mb-6 space-y-3 border-t pt-4">
         <h3 className="text-sm font-medium">Log activity</h3>
 
+        <VoiceApprovalSwitch
+          approvedAt={lead.voice_approved_at}
+          pending={setVoiceApproval.isPending}
+          error={setVoiceApproval.error}
+          onChange={(approved) => setVoiceApproval.mutate({ leadId: lead.id, approved })}
+        />
+
         <div className="space-y-2">
           <div className="flex flex-wrap gap-2">
             <Button
@@ -537,6 +613,13 @@ export function LeadDetail({
             the interview slot. It needs a finished call to refer back to.
           </p>
         </div>
+
+        <AgentTestPanel
+          workspaceId={workspaceId}
+          leadId={lead.id}
+          busy={triggerVoiceCall.isPending}
+          onTestCall={(phone) => void startVoiceCall(false, phone)}
+        />
 
         {/* The most recent completed AI call for *this* lead. Summary only —
             transcript and provider payload live on the call's own page. */}

@@ -288,11 +288,11 @@ async def test_a_first_call_opens_with_the_whole_greeting(
     assert (await _call(api, ws, lead_id)).status_code == 200
 
     opening = bolna.calls[-1].user_data[OPENING_KEY]
-    assert (
-        opening
-        == f"Hi {NAME}, this is Aisha from Level Up Learning. Is now a good time for a quick call?"
-    )
-    assert "{" not in opening
+    # Just "Hello?": nobody is named until the caller confirms who they are,
+    # and no customer's name is built into the product.
+    assert opening == "Hello?"
+    assert NAME not in opening
+    assert "Level Up" not in opening and "Aisha" not in opening
 
 
 async def test_a_follow_up_opens_with_one_word_and_waits(
@@ -332,5 +332,5 @@ async def test_a_lead_with_no_name_is_not_greeted_as_hi_comma(
     assert (await _call(api, ws, str(created.json()["id"]))).status_code == 200
 
     opening = bolna.calls[-1].user_data[OPENING_KEY]
-    assert opening.startswith("Hi, this is Aisha")
+    assert opening == "Hello?"
     assert "Hi ," not in opening

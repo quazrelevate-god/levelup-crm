@@ -39,6 +39,8 @@ export interface VoiceCallSummary {
   readonly created_at: string
   readonly dispatched_at: string | null
   readonly completed_at: string | null
+  /** A test call to a tester's phone, not a call this lead received. */
+  readonly is_test: boolean
 }
 
 /** One extracted item, flattened out of Bolna's grouping by the server. */
@@ -76,9 +78,7 @@ export const callsKey = (workspaceId: string) => ['voice-calls', workspaceId] as
  * can know before the query runs, so React Query hands it the query instead.
  */
 type CallsPoll =
-  | number
-  | false
-  | ((query: { state: { data?: Page<VoiceCallSummary> } }) => number | false)
+  number | false | ((query: { state: { data?: Page<VoiceCallSummary> } }) => number | false)
 
 interface CallListOptions {
   /** Restrict to one lead — the lead panel's card always does. */

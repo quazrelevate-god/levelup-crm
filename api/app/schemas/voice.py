@@ -87,6 +87,24 @@ class VoiceSummaryUpdateResult(BaseModel):
 # --- Phase 2: the Bolna integration ---------------------------------------
 
 
+class VoiceApprovalWrite(BaseModel):
+    """Switch a lead's approval for AI calling on or off (docs/15)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    approved: bool
+
+
+class VoiceApprovalRead(BaseModel):
+    lead_id: uuid.UUID
+    approved: bool
+    approved_at: dt.datetime | None = None
+    #: The membership that switched it on.
+    approved_by_id: uuid.UUID | None = None
+    #: False when the switch was already where it was asked to be.
+    changed: bool
+
+
 class VoiceCallTrigger(BaseModel):
     """Ask the CRM to place a Bolna call to an existing lead.
 
@@ -110,6 +128,10 @@ class VoiceCallTrigger(BaseModel):
     #: they never made. The browser says "follow up with this lead"; the server
     #: says which conversation that is.
     followup: bool = False
+    #: A **test call** (docs/15): dial this number instead of the lead's, with
+    #: the lead's full context, to hear exactly what the lead would hear. It is
+    #: recorded and charged like any call but never moves the lead's stage.
+    test_phone: str | None = Field(default=None, min_length=4, max_length=32)
 
     @model_validator(mode="after")
     def _exactly_one_identifier(self) -> VoiceCallTrigger:
@@ -140,6 +162,52 @@ class VoiceCallTriggerResult(BaseModel):
     previous_call_summary: str | None = None
     call_count: int = 0
     error: str | None = None
+    #: True when this was a test call to a tester's phone.
+    is_test: bool = False
+
+
+class VoiceCallPreviewRequest(BaseModel):
+    """Which lead to preview, identified exactly as for a real call."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    lead_id: uuid.UUID | None = None
+    phone: str | None = Field(default=None, min_length=1, max_length=32)
+    #: Preview the follow-up a real call would place, rather than a first call.
+    followup: bool = False
+
+    @model_validator(mode="after")
+    def _exactly_one_identifier(self) -> VoiceCallPreviewRequest:
+        if (self.lead_id is None) == (self.phone is None):
+            raise ValueError("Provide exactly one of lead_id or phone")
+        return self
+
+
+class VoiceCallPreviewRead(BaseModel):
+    """What a call to this lead would carry, with nothing sent (docs/15)."""
+
+    lead_id: uuid.UUID
+    recipient_phone: str | None = None
+    agent_id: str | None = None
+    #: Exactly the `user_data` a real call would send. Same projection: a
+    #: field the caller may not view is absent here as it would be there.
+    user_data: dict[str, Any] = Field(default_factory=dict)
+    #: Variables that would reach the agent empty — what it will not know.
+    blank_variables: list[str] = Field(default_factory=list)
+    previous_call_summary: str | None = None
+    call_count: int = 0
+
+
+class VoiceVariableRead(BaseModel):
+    """One variable an agent's prompt can use, written `{name}` in Bolna."""
+
+    name: str
+    #: `field` (a workspace lead field) or `crm` (reserved, set by the CRM).
+    kind: str
+    label: str
+    description: str
+    always_sent: bool
+    field_type: str | None = None
 
 
 class VoiceExecutionWebhook(BaseModel):
@@ -283,6 +351,8 @@ class VoiceCallSummaryRead(BaseModel):
     created_at: dt.datetime
     dispatched_at: dt.datetime | None = None
     completed_at: dt.datetime | None = None
+    #: A test call to a tester's phone, not a call the lead received.
+    is_test: bool = False
 
 
 class ExtractionRead(BaseModel):

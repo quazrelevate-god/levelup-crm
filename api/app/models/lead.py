@@ -147,6 +147,12 @@ class Lead(TenantModel):
             postgresql_ops={"identity_value": "gin_trgm_ops"},
         ),
         CheckConstraint("rating IS NULL OR rating BETWEEN 1 AND 5", name="ck_leads_rating_range"),
+        # "Which leads may a batch call" — the approved few, never the rest.
+        Index(
+            "ix_leads_voice_approved",
+            "workspace_id",
+            postgresql_where=text("voice_approved_at IS NOT NULL"),
+        ),
     )
 
     identity_value: Mapped[str] = mapped_column(String(320), nullable=False)
@@ -179,6 +185,14 @@ class Lead(TenantModel):
         UUID(as_uuid=True), ForeignKey("memberships.id", ondelete="SET NULL")
     )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    #: Approved for AI calling (docs/15): set means a batch may dial this lead,
+    #: NULL means it may not. A single "AI Call" from the lead screen does not
+    #: need it — that is a person choosing this lead there and then.
+    voice_approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    voice_approved_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("memberships.id", ondelete="SET NULL")
+    )
 
     actions: Mapped[list[Action]] = relationship(
         back_populates="lead",

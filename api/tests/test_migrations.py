@@ -71,6 +71,12 @@ EXPECTED_REVISIONS = [
     # Post-call automation (docs/13): each call's transcript, duration,
     # summary and call-log link on its execution row.
     "0016_voice_post_call",
+    # Prepaid AI-call wallets (docs/14): balance and append-only ledger.
+    "0017_wallets",
+    # Test calls (docs/15): a call to a tester's phone carrying a lead's context.
+    "0018_voice_test_calls",
+    # Approval for AI calling (docs/15): batches dial approved leads only.
+    "0019_voice_approval",
 ]
 
 
@@ -177,6 +183,10 @@ async def test_no_enum_in_the_database_encodes_business_taxonomy(
         # is kept verbatim in a text column, because a vendor's words are not
         # ours to freeze into the schema either.
         "voice_call_status",
+        # docs/14 — the four ways a wallet balance moves: a payment, a
+        # discount, a correction, a call. The product's own ledger mechanics;
+        # no client names these, and each has a sign the database enforces.
+        "wallet_transaction_kind",
     }
 
     # And the harder check: no enum *value* anywhere names a business concept.

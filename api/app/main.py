@@ -40,6 +40,7 @@ from app.routers import tally as tally_router
 from app.routers import views as views_router
 from app.routers import voice as voice_router
 from app.routers import voice_mappings as voice_mappings_router
+from app.routers import wallet as wallet_router
 from app.routers import work as work_router
 from app.routers import workspaces as workspaces_router
 from app.services.health import HealthService
@@ -167,6 +168,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # API-key authenticated rather than session authenticated — the caller
     # is a service, not a member.
     app.include_router(voice_router.executions_router, prefix=tenant_prefix)
+    # The AI-call wallet (docs/14): read-only for members. Money moves only
+    # through the operator's command line and the call webhook.
+    app.include_router(wallet_router.router, prefix=tenant_prefix)
     # The route Bolna itself posts to. Not under the tenant prefix: the
     # workspace comes from the key in the URL, because Bolna's agent config
     # accepts only a bare webhook_url — no headers, no signature.

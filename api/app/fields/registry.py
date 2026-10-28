@@ -44,6 +44,7 @@ __all__ = [
     "ValidationContext",
     "action_type_spec",
     "lead_type_spec",
+    "normalise_phone",
 ]
 
 # The storage shapes a JSONB value can take. Declared so the registry can tell
@@ -211,6 +212,15 @@ def _norm_phone(value: Any, ctx: ValidationContext) -> str | None:
     # dropped when the country code is prepended.
     national = raw.lstrip("0") or raw
     return f"+{ctx.default_country_code}{national}"
+
+
+def normalise_phone(value: Any, ctx: ValidationContext) -> str | None:
+    """The PHONE field rule, for callers outside field validation.
+
+    A test call's number is typed by a person, not stored in a field, but it
+    must be normalised the same way (rule 12: the workspace's country code).
+    """
+    return _norm_phone(value, ctx)
 
 
 def _norm_checkbox(value: Any, ctx: ValidationContext) -> bool | None:

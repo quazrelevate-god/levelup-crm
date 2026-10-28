@@ -47,8 +47,12 @@ from app.permissions import FieldProjectionService, FieldWriteFilter, load_grant
 from app.schemas.common import Page, PageParams, page_params
 from app.schemas.voice import (
     ExtractionRead,
+    VoiceApprovalRead,
+    VoiceApprovalWrite,
     VoiceCallDetailRead,
     VoiceCallLeadRef,
+    VoiceCallPreviewRead,
+    VoiceCallPreviewRequest,
     VoiceCallSummaryRead,
     VoiceCallTrigger,
     VoiceCallTriggerResult,
@@ -58,14 +62,18 @@ from app.schemas.voice import (
     VoiceInteraction,
     VoiceSummaryUpdate,
     VoiceSummaryUpdateResult,
+    VoiceVariableRead,
 )
 from app.services.leads import LeadService
 from app.services.program_context import ProgramContextService
+from app.services.voice_approval import VoiceApprovalService
 from app.services.voice_calls import VoiceCallService
 from app.services.voice_context import VoiceContext, VoiceContextService
 from app.services.voice_followup import VoiceFollowupService
 from app.services.voice_history import CallWithLead, VoiceCallHistoryService
+from app.services.voice_hours import parse_calling_hours
 from app.services.voice_postcall import CallSummarizer, extractions_from_payload
+from app.services.voice_variables import variable_catalogue
 from app.tenancy.scoping import WorkspaceScope, require_workspace
 
 router = APIRouter(tags=["voice"])
@@ -185,6 +193,9 @@ async def _voice_call_service(
         match_by_phone=request.app.state.settings.bolna_match_by_phone,
         create_missing_leads=request.app.state.settings.bolna_create_missing_leads,
         program_context=ProgramContextService(request.app.state.settings.kb_base_url),
+        calling_hours=parse_calling_hours(request.app.state.settings.voice_calling_hours),
+        # `app.state.clock` is the test seam, like `bolna_client`.
+        clock=getattr(request.app.state, "clock", None),
     )
 
 
@@ -274,6 +285,41 @@ async def update_voice_summary(
     return VoiceSummaryUpdateResult(context=_to_read(context), written=written)
 
 
+# --- approval for AI calling (docs/15) -------------------------------------
+
+
+@router.put(
+    "/voice/approvals/{lead_id}",
+    response_model=VoiceApprovalRead,
+    summary="Approve a lead for AI calling, or remove the approval",
+)
+async def set_voice_approval(
+    lead_id: uuid.UUID,
+    payload: VoiceApprovalWrite,
+    scope: Annotated[WorkspaceScope, Depends(require_workspace)],
+    leads: Annotated[LeadService, Depends(_lead_service)],
+) -> VoiceApprovalRead:
+    """Gated on `calling.log_calls`, the same flag that lets a member place a
+    call: approving a lead for calling is deciding that it will be called.
+
+    `get_lead` applies the caller's lead visibility, so a lead they cannot see
+    is a 404 here exactly as it is everywhere else.
+    """
+    _require(scope, "log_calls")
+    lead = await leads.get_lead(lead_id)
+    changed = await VoiceApprovalService(scope.session, actor_id=scope.membership_id).set_approved(
+        lead, approved=payload.approved
+    )
+    await scope.session.commit()
+    return VoiceApprovalRead(
+        lead_id=lead.id,
+        approved=lead.voice_approved_at is not None,
+        approved_at=lead.voice_approved_at,
+        approved_by_id=lead.voice_approved_by_id,
+        changed=changed,
+    )
+
+
 # --- outbound trigger (Phase 2) --------------------------------------------
 
 
@@ -313,7 +359,9 @@ async def trigger_voice_call(
             raise api_error(422, "followup_not_available", readiness.reason or "")
         purpose = readiness.purpose
 
-    outcome = await calls.trigger(lead, agent_id=payload.agent_id, purpose=purpose)
+    outcome = await calls.trigger(
+        lead, agent_id=payload.agent_id, purpose=purpose, test_phone=payload.test_phone
+    )
     row = outcome.execution
     return VoiceCallTriggerResult(
         call_id=row.id,
@@ -329,7 +377,77 @@ async def trigger_voice_call(
         previous_call_summary=outcome.context.last_call_summary,
         call_count=outcome.context.call_count,
         error=outcome.error,
+        is_test=row.is_test,
     )
+
+
+@router.post(
+    "/voice/calls/preview",
+    response_model=VoiceCallPreviewRead,
+    summary="What a call to this lead would send the agent — nothing is called",
+)
+async def preview_voice_call(
+    payload: VoiceCallPreviewRequest,
+    scope: Annotated[WorkspaceScope, Depends(require_workspace)],
+    calls: Annotated[VoiceCallService, Depends(_voice_call_service)],
+) -> VoiceCallPreviewRead:
+    """Every variable and its value, exactly as a real call would build them.
+
+    Same gate as placing a call (`calling.log_calls`), because it shows the
+    same data. Writes nothing and contacts nobody, so it is safe to use as
+    often as needed — before a pilot, after editing a lead, while tuning the
+    agent's script.
+    """
+    _require(scope, "log_calls")
+    lead = await calls.resolve_lead(lead_id=payload.lead_id, phone=payload.phone)
+    purpose = None
+    if payload.followup:
+        readiness = await VoiceFollowupService(scope.session).readiness(lead.id)
+        if not readiness.allowed:
+            raise api_error(422, "followup_not_available", readiness.reason or "")
+        purpose = readiness.purpose
+    preview = await calls.preview(lead, purpose=purpose)
+    return VoiceCallPreviewRead(
+        lead_id=preview.lead_id,
+        recipient_phone=preview.recipient_phone,
+        agent_id=preview.agent_id,
+        user_data=preview.user_data,
+        blank_variables=preview.blank_variables,
+        previous_call_summary=preview.previous_call_summary,
+        call_count=preview.call_count,
+    )
+
+
+@router.get(
+    "/voice/variables",
+    response_model=list[VoiceVariableRead],
+    summary="Every variable an agent's prompt can use, and what it holds",
+)
+async def list_voice_variables(
+    scope: Annotated[WorkspaceScope, Depends(require_workspace)],
+) -> list[VoiceVariableRead]:
+    """The workspace's own fields the caller may see, then the reserved ones.
+
+    Written `{name}` in the agent's prompt. Gated on `calling.view_call_history`.
+    """
+    _require(scope, "view_call_history")
+    rows = await scope.session.execute(
+        scope.session.select(LeadField).order_by(LeadField.sort_order)
+    )
+    fields = list(rows.scalars().all())
+    projection = await scope.projection()
+    visible = projection.visible_field_keys([field.key for field in fields])
+    return [
+        VoiceVariableRead(
+            name=item.name,
+            kind=item.kind,
+            label=item.label,
+            description=item.description,
+            always_sent=item.always_sent,
+            field_type=item.field_type,
+        )
+        for item in variable_catalogue(fields, visible)
+    ]
 
 
 # --- reading past calls (docs/13 §6) ---------------------------------------
@@ -374,6 +492,7 @@ def _call_summary(entry: CallWithLead) -> VoiceCallSummaryRead:
         created_at=call.created_at,
         dispatched_at=call.dispatched_at,
         completed_at=call.completed_at,
+        is_test=call.is_test,
     )
 
 

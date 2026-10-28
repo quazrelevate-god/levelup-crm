@@ -414,3 +414,72 @@ async def test_two_calls_keep_their_own_extractions(
     assert one["extractions"][0]["value"] == "The first call."
     assert two["extractions"][0]["value"] == "The second call."
     assert uuid.UUID(one["id"]) != uuid.UUID(two["id"])
+
+
+# --- Bolna's two-part answers: `objective` (the chosen option) and `subjective` --
+
+
+#: Exactly the shape `.claude/skills/create-disposition` documents for a
+#: disposition with both answer types on: the chosen option *and* prose.
+TWO_PART = {
+    "Lead": {
+        "Fee Link Decision": {
+            "subjective": "They asked for the application fee link on WhatsApp.",
+            "objective": "fee_link_requested",
+            "confidence": 0.92,
+            "confidence_label": "High",
+            "reasoning_subjective": "Caller said 'send me the link'.",
+            "reasoning_objective": "Caller explicitly agreed to receive the fee link.",
+            "validation": None,
+        }
+    }
+}
+
+
+def test_the_chosen_option_wins_over_the_free_text() -> None:
+    """The bug this fixes: `objective` was never read, so the option was lost.
+
+    The field received the prose instead, and anything acting on the option
+    (a stage rule, a filter, a report) matched nothing.
+    """
+    [item] = flatten_extractions(TWO_PART)
+    assert item.value == "fee_link_requested"
+    assert item.confidence == 0.92
+
+
+def test_an_option_only_disposition_still_has_a_value() -> None:
+    """`is_subjective: false` sends `subjective: null`. Before, that read as empty."""
+    [item] = flatten_extractions(
+        {"Lead": {"Fee Link Decision": {"subjective": None, "objective": "needs_time"}}}
+    )
+    assert item.value == "needs_time"
+
+
+def test_a_free_text_disposition_falls_back_to_its_prose() -> None:
+    [item] = flatten_extractions(
+        {"Contact": {"WhatsApp Number": {"subjective": "90000 12345", "objective": None}}}
+    )
+    assert item.value == "90000 12345"
+
+
+@pytest.mark.integration
+async def test_a_chosen_option_is_what_reaches_the_mapped_field(
+    api: AsyncClient, ws: WorkspaceFixture, bolna: RecordingBolnaClient
+) -> None:
+    """End to end, in Bolna's real two-part shape: the field gets the option."""
+    key = await _key(api, ws)
+    field = await api.post(
+        ws.path("/settings/lead-fields"),
+        headers=ws.owner.auth,
+        json={"label": "AI Call Outcome", "field_type": "TEXT"},
+    )
+    assert field.status_code == 201, field.text
+    field_key = field.json()["key"]
+    await _mapping(api, ws, name="Fee Link Decision", field=field_key)
+    lead = await _lead(api, ws)
+
+    result = await _run_call(api, ws, key, lead["id"], TWO_PART)
+
+    assert result["extraction_written"] == ["Lead / Fee Link Decision"]
+    after = (await api.get(ws.path(f"/leads/{lead['id']}"), headers=ws.owner.auth)).json()
+    assert after["values"][field_key] == "fee_link_requested"

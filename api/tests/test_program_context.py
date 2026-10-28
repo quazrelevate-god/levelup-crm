@@ -364,23 +364,32 @@ async def test_existing_user_data_is_unchanged_and_two_keys_are_added(
     assert user_data["crm_workspace_id"] == str(ws.id)
     assert user_data["crm_is_repeat_caller"] == "no"
     assert user_data["crm_call_count"] == "0"
-    # And exactly two keys are new.
-    added = set(user_data) - {
-        "name",
-        "phone",
-        "email",
-        field_key,
-        "crm_lead_id",
-        "crm_workspace_id",
-        "crm_idempotency",
-        "crm_call_count",
-        "crm_is_repeat_caller",
-        "crm_stage",
-        "crm_owner",
-        # The caller context (`app.services.lead_context`) rides alongside and
-        # is tested in `test_lead_context.py`; this test is about the programme.
-        "crm_lead_context",
-    }
+    # And exactly two keys are new. Every lead field the caller may view is
+    # sent, filled or empty (docs/15), so the baseline is the workspace's own
+    # field list rather than the handful this lead happens to have values in.
+    fields = await api.get(ws.path("/settings/lead-fields"), headers=ws.owner.auth)
+    field_keys = {item["key"] for item in fields.json()}
+    assert field_key in field_keys
+    added = (
+        set(user_data)
+        - field_keys
+        - {
+            "crm_lead_id",
+            "crm_workspace_id",
+            "crm_idempotency",
+            "crm_call_count",
+            "crm_is_repeat_caller",
+            "crm_stage",
+            "crm_owner",
+            # The caller context (`app.services.lead_context`) rides alongside and
+            # is tested in `test_lead_context.py`; this test is about the programme.
+            "crm_lead_context",
+            # The agent's welcome line (`app.services.voice_followup.opening_line`),
+            # sent on every call with or without a knowledge base; tested in
+            # `test_voice_followup.py`.
+            "call_opening",
+        }
+    )
     assert added == {"crm_program_name", "crm_program_context"}
     assert user_data["crm_program_name"] == "Tide Pool Diving"
 

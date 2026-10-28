@@ -10,6 +10,7 @@
 
 import {
   Activity,
+  Braces,
   BarChart3,
   CalendarClock,
   FileSpreadsheet,
@@ -27,6 +28,7 @@ import {
   Upload,
   UserCog,
   Users,
+  Wallet,
   Waypoints,
 } from 'lucide-react'
 
@@ -129,6 +131,18 @@ export const SETTINGS_GROUPS: readonly NavGroup[] = [
         label: 'Voice extraction',
         icon: SlidersHorizontal,
         description: 'How a Bolna call result maps onto fields, stages and actions.',
+      },
+      {
+        to: '/settings/voice-variables',
+        label: 'Agent variables',
+        icon: Braces,
+        description: "The {names} to use in the voice agent's script, and what each holds.",
+      },
+      {
+        to: '/settings/wallet',
+        label: 'Wallet',
+        icon: Wallet,
+        description: 'Prepaid AI-call minutes: balance, usage and the statement.',
       },
       {
         to: '/settings/system',
