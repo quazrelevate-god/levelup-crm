@@ -1176,3 +1176,51 @@ async def test_without_the_option_an_import_is_dated_as_before(
     assert all(
         dt.datetime.fromisoformat(v) >= before - dt.timedelta(seconds=5) for v in created.values()
     )
+
+
+# --- the same lead twice in one file ----------------------------------------
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("identity", "rows"),
+    [
+        # Two rows for one phone number.
+        ("phone", [["9000000401", "Rahul"], ["9000000401", "Rahul K"]]),
+        # Production keyed on Name, and two different people shared a first name.
+        ("name", [["9000000402", "Rahul"], ["9000000403", "Rahul"]]),
+    ],
+    ids=["same-phone", "same-name"],
+)
+async def test_the_same_lead_twice_in_one_file_is_a_row_error_not_a_crash(
+    api: AsyncClient,
+    workspace: WorkspaceFixture,
+    db_session: AsyncSession,
+    identity: str,
+    rows: list[list[str]],
+) -> None:
+    """Regression: two rows with one identifier both previewed as "create", and
+    the commit then died on the unique index with a 500, importing nothing.
+
+    The second row is now an error that names the first, the preview says so
+    before anything is written, and the rest of the file imports.
+    """
+    workspace.workspace.identity_field_id = workspace.fields[identity].id
+    await db_session.commit()
+    headers = await _admin(api, workspace)
+    content = _csv([["Phone", "Name"], *rows, ["9000000404", "Selvi"]])
+
+    job = await _upload(api, workspace, headers, content)
+    previewed = await _run(
+        api, workspace, headers, job["id"], {"Phone": "phone", "Name": "name"}, commit=False
+    )
+    assert previewed["result"]["counts"] == {"create": 2, "error": 1}
+    [error] = previewed["result"]["errors"]
+    assert error["row_number"] == 3
+    assert "row 2" in error["message"]
+
+    committed = await api.post(workspace.path(f"/imports/{job['id']}/commit"), headers=headers)
+    assert committed.status_code == 200, committed.text
+    assert committed.json()["result"]["counts"] == {"create": 2, "error": 1}
+    leads = (await api.get(workspace.path("/leads"), headers=headers)).json()
+    assert leads["total"] == 2

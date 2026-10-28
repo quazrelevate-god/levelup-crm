@@ -499,6 +499,11 @@ class ImportService:
         existing = await self._existing_by_identity()
         outcomes: list[RowOutcome] = []
         cursor = 0
+        # Identifiers this file has already created, by row. A second row with
+        # the same one would create a second lead with the same identifier,
+        # which the unique index refuses at commit — after the preview said all
+        # was well. It is a row error instead, naming the row it repeats.
+        created_here: dict[str, int] = {}
 
         for index, row in enumerate(sheet.rows):
             row_number = index + 2  # header is row 1
@@ -561,7 +566,20 @@ class ImportService:
                     )
                     continue
 
+            if match is None and normalised in created_here:
+                outcomes.append(
+                    RowOutcome(
+                        row_number,
+                        "error",
+                        normalised,
+                        f"Same {by_key[identity_key].label} as row {created_here[normalised]}"
+                        " in this file",
+                    )
+                )
+                continue
+
             if match is None:
+                created_here[normalised] = row_number
                 outcomes.append(RowOutcome(row_number, "create", normalised))
                 if commit and writer is not None:
                     await self._create_lead(
