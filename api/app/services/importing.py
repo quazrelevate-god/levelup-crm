@@ -27,6 +27,17 @@ Three rules the whole module is built around:
    preview that came from a different path than the write is a preview of
    something else.
 3. **A whole run is one changeset**, so a bad import is one undo.
+
+**Where a lead was first received** (`created_at_column`). A lead migrated from
+another CRM was not received today: its enquiry date is in the old system's
+export. Left alone, every imported lead would be dated the moment of the
+import, and the voice agent — told "Enquiry received: <created_at>" — would
+say someone who applied in August had just enquired. The run can therefore
+name a column that sets `created_at` on the leads it *creates*. Existing leads
+are never re-dated: an update describes the same person, whose history the
+CRM already holds. The date format is chosen, never guessed (`03/04/2026` is
+3 April in India and 4 March in the US), and a date without a timezone is read
+in the workspace's own (architecture rule 10).
 """
 
 from __future__ import annotations
@@ -36,6 +47,7 @@ import datetime as dt
 import uuid
 from collections.abc import Mapping, Sequence
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func
 from sqlalchemy.orm import selectinload
@@ -61,12 +73,67 @@ from app.services.actions import ActionWriter, FieldDelta
 from app.services.sheets import Sheet, read_sheet
 from app.tenancy.session import ScopedSession
 
-__all__ = ["DistributionStrategy", "ImportService", "RowOutcome"]
+__all__ = [
+    "CREATED_AT_FORMATS",
+    "DistributionStrategy",
+    "ImportService",
+    "RowOutcome",
+    "parse_created_at",
+]
 
 #: Rows reported back individually. Beyond this the operator needs the summary
 #: counts, not five thousand messages — and a response carrying all of them
 #: would be unreadable and enormous.
 MAX_REPORTED_ROWS = 200
+
+#: `created_at_format` values, and the patterns each accepts after ISO 8601.
+#: ISO is always accepted: it cannot be misread.
+CREATED_AT_FORMATS: dict[str, tuple[str, ...]] = {
+    "iso": (),
+    "day_first": (
+        "%d/%m/%Y %H:%M:%S",
+        "%d/%m/%Y %H:%M",
+        "%d/%m/%Y",
+        "%d-%m-%Y %H:%M:%S",
+        "%d-%m-%Y",
+    ),
+    "month_first": (
+        "%m/%d/%Y %H:%M:%S",
+        "%m/%d/%Y %H:%M",
+        "%m/%d/%Y",
+        "%m-%d-%Y %H:%M:%S",
+        "%m-%d-%Y",
+    ),
+}
+
+
+def parse_created_at(raw: str, fmt: str, timezone: str) -> dt.datetime:
+    """A received-on timestamp from a sheet, as an aware datetime.
+
+    Raises `ValueError` with an operator-readable reason. A value without a
+    timezone is the workspace's local time.
+    """
+    text = (raw or "").strip()
+    if not text:
+        raise ValueError("no date given")
+    parsed: dt.datetime | None = None
+    try:
+        parsed = dt.datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        for pattern in CREATED_AT_FORMATS.get(fmt, ()):
+            try:
+                parsed = dt.datetime.strptime(text, pattern)
+                break
+            except ValueError:
+                continue
+    if parsed is None:
+        shape = {"day_first": "DD/MM/YYYY HH:MM:SS", "month_first": "MM/DD/YYYY HH:MM:SS"}
+        raise ValueError(f"{text!r} is not a date in {shape.get(fmt, 'YYYY-MM-DD HH:MM:SS')} form")
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=ZoneInfo(timezone))
+    if parsed > dt.datetime.now(dt.UTC):
+        raise ValueError(f"{text!r} is in the future")
+    return parsed
 
 
 class DistributionStrategy:
@@ -254,6 +321,7 @@ class ImportService:
         await self._schema()
         if job.kind in {ImportJobKind.LEAD_IMPORT, ImportJobKind.LEAD_UPDATE}:
             self._check_lead_mapping(job, mapping)
+            self._check_created_at_options(job, options or {})
 
         job.mapping = dict(mapping)
         job.options = dict(options or {})
@@ -280,6 +348,22 @@ class ImportService:
                 "field_not_importable",
                 "Some mapped fields are not available for import in this workspace",
                 fields=hidden,
+            )
+
+    @staticmethod
+    def _check_created_at_options(job: ImportJob, options: Mapping[str, Any]) -> None:
+        column = str(options.get("created_at_column") or "")
+        fmt = str(options.get("created_at_format") or "iso")
+        if fmt not in CREATED_AT_FORMATS:
+            raise unprocessable(
+                "invalid_created_at_format",
+                f"created_at_format must be one of: {', '.join(CREATED_AT_FORMATS)}",
+            )
+        if column and column not in job.source_columns:
+            raise unprocessable(
+                "unknown_column",
+                "The created-on column is not in the file",
+                columns=[column],
             )
 
     # --- the run ------------------------------------------------------------
@@ -395,6 +479,8 @@ class ImportService:
 
         targets = await self._distribution_targets(job)
         owner_column = str(job.options.get("owner_column") or "")
+        created_column = str(job.options.get("created_at_column") or "")
+        created_format = str(job.options.get("created_at_format") or "iso")
         strategy = str(job.options.get("strategy", DistributionStrategy.NONE))
         members_by_email = (
             await self._members_by_email() if strategy == DistributionStrategy.COLUMN else {}
@@ -463,10 +549,24 @@ class ImportService:
             }:
                 cursor += 1
 
+            created_at: dt.datetime | None = None
+            if match is None and created_column:
+                try:
+                    created_at = parse_created_at(
+                        row.get(created_column, ""), created_format, self._workspace.timezone
+                    )
+                except ValueError as exc:
+                    outcomes.append(
+                        RowOutcome(row_number, "error", normalised, f"{created_column}: {exc}")
+                    )
+                    continue
+
             if match is None:
                 outcomes.append(RowOutcome(row_number, "create", normalised))
                 if commit and writer is not None:
-                    await self._create_lead(writer, validated.values, normalised, assignee)
+                    await self._create_lead(
+                        writer, validated.values, normalised, assignee, created_at=created_at
+                    )
             else:
                 outcomes.append(RowOutcome(row_number, "update", normalised))
                 if commit and writer is not None:
@@ -525,6 +625,8 @@ class ImportService:
         values: Mapping[str, Any],
         identity: str,
         assignee_id: uuid.UUID | None,
+        *,
+        created_at: dt.datetime | None = None,
     ) -> Lead:
         stage = await self._initial_stage()
         lead = Lead(
@@ -534,6 +636,10 @@ class ImportService:
             assignee_id=assignee_id,
             created_by_id=self._actor_id,
         )
+        if created_at is not None:
+            # When the enquiry first reached the business, from the old
+            # system's export — not the moment of this import.
+            lead.created_at = created_at
         lead.search_vector = self._vector(lead)
         self._session.add(lead)
         await self._session.flush()

@@ -1012,3 +1012,167 @@ async def test_a_merge_is_one_changeset(api: AsyncClient, workspace: WorkspaceFi
 
     detail = (await api.get(workspace.path(f"/changesets/{changeset_id}"), headers=headers)).json()
     assert "Merged" in detail["summary"]
+
+
+# --- import: when the lead was first received ----------------------------------
+
+
+def _created_rows() -> bytes:
+    return _csv(
+        [
+            ["Phone", "Name", "Created On"],
+            ["9000000301", "Sumit", "24/09/2026 13:29:25"],
+            ["9000000302", "Azad", "08/10/2026 12:21:37"],
+        ]
+    )
+
+
+async def _created_at(api: AsyncClient, ws: WorkspaceFixture, headers: dict[str, str]) -> dict:
+    leads = (await api.get(ws.path("/leads"), headers=headers)).json()["items"]
+    return {lead["identity_value"]: lead["created_at"] for lead in leads}
+
+
+@pytest.mark.integration
+async def test_an_imported_lead_keeps_the_date_it_was_first_received(
+    api: AsyncClient, workspace: WorkspaceFixture, db_session: AsyncSession
+) -> None:
+    """A lead migrated from TeleCRM applied in September, not on import day.
+
+    Read day-first (TeleCRM's `DD/MM/YYYY`), in the workspace's own timezone.
+    """
+    workspace.workspace.timezone = "Asia/Kolkata"
+    await db_session.commit()
+    headers = await _admin(api, workspace)
+    job = await _upload(api, workspace, headers, _created_rows())
+
+    committed = await _run(
+        api,
+        workspace,
+        headers,
+        job["id"],
+        {"Phone": "phone", "Name": "name"},
+        {"created_at_column": "Created On", "created_at_format": "day_first"},
+    )
+
+    assert committed["result"]["counts"] == {"create": 2}
+    created = await _created_at(api, workspace, headers)
+    sumit = dt.datetime.fromisoformat(created["+919000000301"])
+    # 13:29:25 in Kolkata is 07:59:25 UTC — the same instant, read locally.
+    assert sumit.astimezone(dt.UTC) == dt.datetime(2026, 9, 24, 7, 59, 25, tzinfo=dt.UTC)
+    azad = dt.datetime.fromisoformat(created["+919000000302"])
+    assert (azad.year, azad.month, azad.day) == (2026, 10, 8)
+
+
+@pytest.mark.integration
+async def test_an_iso_created_on_needs_no_format(
+    api: AsyncClient, workspace: WorkspaceFixture
+) -> None:
+    headers = await _admin(api, workspace)
+    job = await _upload(
+        api,
+        workspace,
+        headers,
+        _csv([["Phone", "Created"], ["9000000311", "2026-08-01T09:00:00+00:00"]]),
+    )
+    await _run(
+        api, workspace, headers, job["id"], {"Phone": "phone"}, {"created_at_column": "Created"}
+    )
+    created = await _created_at(api, workspace, headers)
+    assert dt.datetime.fromisoformat(created["+919000000311"]) == dt.datetime(
+        2026, 8, 1, 9, 0, tzinfo=dt.UTC
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("value", "reason"),
+    [("31/31/2026 10:00:00", "not a date"), ("01/01/2099 10:00:00", "in the future")],
+)
+async def test_a_bad_created_on_is_a_row_error_in_the_preview(
+    api: AsyncClient, workspace: WorkspaceFixture, value: str, reason: str
+) -> None:
+    """Caught before anything is written, with the row and the reason."""
+    headers = await _admin(api, workspace)
+    job = await _upload(
+        api,
+        workspace,
+        headers,
+        _csv([["Phone", "Created On"], ["9000000321", value], ["9000000322", "01/08/2026"]]),
+    )
+    previewed = await _run(
+        api,
+        workspace,
+        headers,
+        job["id"],
+        {"Phone": "phone"},
+        {"created_at_column": "Created On", "created_at_format": "day_first"},
+        commit=False,
+    )
+    assert previewed["result"]["counts"] == {"error": 1, "create": 1}
+    [error] = previewed["result"]["errors"]
+    assert error["row_number"] == 2
+    assert reason in error["message"]
+    leads = (await api.get(workspace.path("/leads"), headers=headers)).json()
+    assert leads["total"] == 0
+
+
+@pytest.mark.integration
+async def test_an_existing_lead_is_never_re_dated(
+    api: AsyncClient, workspace: WorkspaceFixture
+) -> None:
+    """An update describes someone the CRM already holds; their date stays."""
+    headers = await _admin(api, workspace)
+    existing = await _lead(api, workspace, headers, name="Already here", phone="9000000301")
+    job = await _upload(api, workspace, headers, _created_rows())
+
+    committed = await _run(
+        api,
+        workspace,
+        headers,
+        job["id"],
+        {"Phone": "phone", "Name": "name"},
+        {"created_at_column": "Created On", "created_at_format": "day_first"},
+    )
+
+    assert committed["result"]["counts"] == {"update": 1, "create": 1}
+    created = await _created_at(api, workspace, headers)
+    assert created["+919000000301"] == existing["created_at"]
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("options", "code"),
+    [
+        (
+            {"created_at_column": "Created On", "created_at_format": "guess"},
+            "invalid_created_at_format",
+        ),
+        ({"created_at_column": "Not A Column"}, "unknown_column"),
+    ],
+)
+async def test_created_on_options_are_checked_when_mapping(
+    api: AsyncClient, workspace: WorkspaceFixture, options: dict[str, Any], code: str
+) -> None:
+    headers = await _admin(api, workspace)
+    job = await _upload(api, workspace, headers, _created_rows())
+    response = await api.put(
+        workspace.path(f"/imports/{job['id']}/mapping"),
+        headers=headers,
+        json={"mapping": {"Phone": "phone"}, "options": options},
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == code
+
+
+@pytest.mark.integration
+async def test_without_the_option_an_import_is_dated_as_before(
+    api: AsyncClient, workspace: WorkspaceFixture
+) -> None:
+    headers = await _admin(api, workspace)
+    job = await _upload(api, workspace, headers, _created_rows())
+    before = dt.datetime.now(dt.UTC)
+    await _run(api, workspace, headers, job["id"], {"Phone": "phone", "Name": "name"})
+    created = await _created_at(api, workspace, headers)
+    assert all(
+        dt.datetime.fromisoformat(v) >= before - dt.timedelta(seconds=5) for v in created.values()
+    )

@@ -349,6 +349,17 @@ undo is just another undo, not a special case.
   `FieldWriteFilter.check_import` already exists.
 - Dry-run preview shows create-versus-update counts before committing.
 - The whole run is **one changeset**, so a bad import is one undo.
+- **When the lead first came in.** Leads moved from another CRM arrive with a
+  history. Mapping options `created_at_column` (a column in the file) and
+  `created_at_format` (`iso`, `day_first` for `DD/MM/YYYY HH:MM:SS`, or
+  `month_first`) date each *new* lead from that column instead of the import
+  day. A value without a timezone is read in the workspace's timezone. An
+  empty, unreadable or future date is a row error in the preview. A lead that
+  already exists is never re-dated. Without the option, imports are dated as
+  before. This is what the voice agent's "Enquiry received" line reads.
+- **A hidden field cannot be imported into.** Hidden means retired: it is off
+  the lead screen and refuses writes. To keep a column out of the CRM, leave it
+  unmapped.
 - Four distinct flows the audit found missing, all still missing: Excel Advance
   Distribution, Owner Specific Assignment, Excel Bulk Update, and Import Existing
   Actions (historical timeline migration — every customer switching CRMs needs
