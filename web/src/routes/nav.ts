@@ -58,6 +58,7 @@ export const WORKSPACE_NAV: readonly NavLink[] = [
   { to: '/templates', label: 'Templates', icon: MessageSquareText },
   { to: '/edit-report', label: 'Edit report', icon: History },
   { to: '/members', label: 'Team', icon: Users },
+  { to: '/wallet', label: 'Wallet', icon: Wallet },
 ]
 
 /**
@@ -133,16 +134,16 @@ export const SETTINGS_GROUPS: readonly NavGroup[] = [
         description: 'How a Bolna call result maps onto fields, stages and actions.',
       },
       {
+        to: '/settings/calling-numbers',
+        label: 'Calling numbers',
+        icon: Phone,
+        description: 'The numbers AI calls go out from, taking turns across the list.',
+      },
+      {
         to: '/settings/voice-variables',
         label: 'Agent variables',
         icon: Braces,
         description: "The {names} to use in the voice agent's script, and what each holds.",
-      },
-      {
-        to: '/settings/wallet',
-        label: 'Wallet',
-        icon: Wallet,
-        description: 'Prepaid AI-call minutes: balance, usage and the statement.',
       },
       {
         to: '/settings/system',

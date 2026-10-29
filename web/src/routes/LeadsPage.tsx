@@ -38,6 +38,7 @@ import { PageHeader, Toolbar } from '@/components/ui/page-header'
 import { Dialog } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { cn } from '@/lib/utils'
 import { Select } from '@/components/ui/select'
 import { useAuth } from '@/features/auth/context'
 import { useFieldTypes, useIndexedFields, useLeadFields } from '@/features/fields/api'
@@ -252,22 +253,46 @@ export function LeadsPage() {
         }
       />
 
-      <Toolbar>
-        <Select
-          aria-label="Saved filter"
-          className="w-52"
-          value={activeFilterId ?? ''}
-          onChange={(event) => applySavedFilter(event.target.value)}
+      {/* Saved views as one-click tabs. A view is a named, saved filter:
+          build it under Filters, then "Save as filter". */}
+      <nav aria-label="Saved views" className="flex flex-wrap items-center gap-2">
+        {[{ id: '', name: 'All leads', visibility: null }, ...(savedFilters.data ?? [])].map(
+          (view) => {
+            const active = (activeFilterId ?? '') === view.id
+            return (
+              <button
+                key={view.id || 'all'}
+                type="button"
+                aria-pressed={active}
+                onClick={() => applySavedFilter(view.id)}
+                className={cn(
+                  'h-8 rounded-full border px-3.5 text-sm transition-colors',
+                  active
+                    ? 'bg-primary text-primary-foreground border-transparent'
+                    : 'border-border/70 text-muted-foreground hover:bg-accent hover:text-foreground',
+                )}
+              >
+                {view.name}
+                {view.visibility === 'SHARED' ? (
+                  <span className="ml-1.5 text-xs opacity-70">shared</span>
+                ) : null}
+                {view.visibility === 'ROLE' ? (
+                  <span className="ml-1.5 text-xs opacity-70">role</span>
+                ) : null}
+              </button>
+            )
+          },
+        )}
+        <button
+          type="button"
+          onClick={() => setBuilderOpen(true)}
+          className="text-muted-foreground hover:text-foreground h-8 rounded-full border border-dashed px-3.5 text-sm transition-colors"
         >
-          <option value="">All leads</option>
-          {(savedFilters.data ?? []).map((saved) => (
-            <option key={saved.id} value={saved.id}>
-              {saved.name}
-              {saved.visibility === 'SHARED' ? ' (shared)' : ''}
-              {saved.visibility === 'ROLE' ? ' (role)' : ''}
-            </option>
-          ))}
-        </Select>
+          + Save view
+        </button>
+      </nav>
+
+      <Toolbar>
         <Input
           className="max-w-56"
           placeholder="Search by identifier"

@@ -52,9 +52,13 @@ const base = (workspaceId: string) => `/workspaces/${workspaceId}/wallet`
 
 export const walletKey = (workspaceId: string) => ['wallet', workspaceId] as const
 
-export function useWallet(workspaceId: string) {
+export function useWallet(
+  workspaceId: string,
+  options: { readonly refetchInterval?: number } = {},
+) {
   return useQuery({
     queryKey: walletKey(workspaceId),
+    refetchInterval: options.refetchInterval,
     queryFn: () => api.get<Wallet>(base(workspaceId)),
     // A 404 (not metered) or 403 (no billing permission) is an answer, not a
     // hiccup worth retrying.

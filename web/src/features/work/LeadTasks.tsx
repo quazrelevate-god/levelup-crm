@@ -10,7 +10,9 @@
  */
 
 import { useState } from 'react'
+import { ListChecks } from 'lucide-react'
 
+import { DetailSection } from '@/components/ui/detail-section'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useCompleteTask, useCreateTask, useLeadTasks } from '@/features/work/api'
@@ -18,9 +20,11 @@ import { useCompleteTask, useCreateTask, useLeadTasks } from '@/features/work/ap
 export interface LeadTasksProps {
   readonly workspaceId: string
   readonly leadId: string
+  /** Band colour in the lead panel's alternating sections. */
+  readonly tone?: 'a' | 'b'
 }
 
-export function LeadTasks({ workspaceId, leadId }: LeadTasksProps) {
+export function LeadTasks({ workspaceId, leadId, tone = 'a' }: LeadTasksProps) {
   const tasks = useLeadTasks(workspaceId, leadId)
   const create = useCreateTask(workspaceId)
   const complete = useCompleteTask(workspaceId)
@@ -31,9 +35,7 @@ export function LeadTasks({ workspaceId, leadId }: LeadTasksProps) {
   const open = (tasks.data ?? []).filter((task) => task.completed_at === null)
 
   return (
-    <section className="mb-6 space-y-2 border-t pt-4">
-      <h3 className="text-sm font-medium">Follow-ups</h3>
-
+    <DetailSection title="Follow-ups" icon={ListChecks} tone={tone}>
       {open.length === 0 ? (
         <p className="text-muted-foreground text-sm">Nothing outstanding.</p>
       ) : (
@@ -94,6 +96,6 @@ export function LeadTasks({ workspaceId, leadId }: LeadTasksProps) {
           Add
         </Button>
       </div>
-    </section>
+    </DetailSection>
   )
 }

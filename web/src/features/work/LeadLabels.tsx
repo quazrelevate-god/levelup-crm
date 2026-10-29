@@ -12,8 +12,10 @@
  */
 
 import { useState } from 'react'
+import { Tag } from 'lucide-react'
 
 import type { Label } from '@/api/types'
+import { DetailSection } from '@/components/ui/detail-section'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -28,9 +30,11 @@ import {
 export interface LeadLabelsProps {
   readonly workspaceId: string
   readonly leadId: string
+  /** Band colour in the lead panel's alternating sections. */
+  readonly tone?: 'a' | 'b'
 }
 
-export function LeadLabels({ workspaceId, leadId }: LeadLabelsProps) {
+export function LeadLabels({ workspaceId, leadId, tone = 'a' }: LeadLabelsProps) {
   const all = useLabels(workspaceId)
   const applied = useLeadLabels(workspaceId, leadId)
   const attach = useAttachLabel(workspaceId)
@@ -52,9 +56,7 @@ export function LeadLabels({ workspaceId, leadId }: LeadLabelsProps) {
   }
 
   return (
-    <section className="mb-6 space-y-2 border-t pt-4">
-      <h3 className="text-sm font-medium">Labels</h3>
-
+    <DetailSection title="Labels" icon={Tag} tone={tone}>
       <div className="flex flex-wrap items-center gap-2">
         {(applied.data ?? []).map((label) => (
           <Badge
@@ -127,6 +129,6 @@ export function LeadLabels({ workspaceId, leadId }: LeadLabelsProps) {
           New label
         </Button>
       )}
-    </section>
+    </DetailSection>
   )
 }

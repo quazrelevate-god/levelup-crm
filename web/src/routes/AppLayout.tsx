@@ -6,6 +6,7 @@ import { MarbiMark, MarbiWordmark } from '@/components/brand/MarbiLogo'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/features/auth/context'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
+import { WalletBadge } from '@/features/wallet/WalletBadge'
 import { PRIMARY_NAV, WORKSPACE_NAV, isActive, type NavLink as NavLinkSpec } from '@/routes/nav'
 import { cn } from '@/lib/utils'
 
@@ -178,7 +179,7 @@ export function AppLayout() {
       ) : null}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 shrink-0 items-center justify-between gap-3 px-4">
+        <header className="relative z-40 flex h-14 shrink-0 items-center justify-between gap-3 px-4">
           <div className="flex min-w-0 items-center gap-2">
             <Button
               variant="ghost"
@@ -199,6 +200,7 @@ export function AppLayout() {
           </div>
 
           <div className="flex items-center gap-1.5">
+            <WalletBadge workspaceId={activeWorkspaceId} />
             <span className="text-muted-foreground hidden max-w-[24ch] truncate text-sm sm:inline">
               {user?.email}
             </span>

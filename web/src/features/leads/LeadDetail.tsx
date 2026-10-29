@@ -12,6 +12,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
+import { GitBranch, History, PhoneCall, Table2 } from 'lucide-react'
 
 import { ApiError } from '@/api/client'
 import type {
@@ -29,6 +30,7 @@ import type {
   TemplateChannel,
 } from '@/api/types'
 import { Badge } from '@/components/ui/badge'
+import { DetailSection } from '@/components/ui/detail-section'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -436,7 +438,7 @@ export function LeadDetail({
         </p>
       ) : null}
 
-      <section className="mb-6 space-y-3">
+      <DetailSection title="Stage and rating" icon={GitBranch} tone="a">
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label htmlFor="lead-stage">Stage</Label>
@@ -512,11 +514,13 @@ export function LeadDetail({
             />
           </div>
         </div>
-      </section>
+      </DetailSection>
 
-      <section className="mb-6 space-y-3 border-t pt-4">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-medium">Fields</h3>
+      <DetailSection
+        title="Fields"
+        icon={Table2}
+        tone="b"
+        action={
           <Button
             size="sm"
             disabled={Object.keys(draft).length === 0 || updateLead.isPending}
@@ -524,8 +528,8 @@ export function LeadDetail({
           >
             Save {Object.keys(draft).length > 0 ? `(${Object.keys(draft).length})` : ''}
           </Button>
-        </div>
-
+        }
+      >
         {visibleFields.map((field) => {
           const renderer = rendererFor(field)
           if (!renderer) return null
@@ -564,11 +568,9 @@ export function LeadDetail({
               : 'No fields are visible to your permission template.'}
           </p>
         ) : null}
-      </section>
+      </DetailSection>
 
-      <section className="mb-6 space-y-3 border-t pt-4">
-        <h3 className="text-sm font-medium">Log activity</h3>
-
+      <DetailSection title="Log activity" icon={PhoneCall} tone="a">
         <VoiceApprovalSwitch
           approvedAt={lead.voice_approved_at}
           pending={setVoiceApproval.isPending}
@@ -684,14 +686,13 @@ export function LeadDetail({
             )
           }
         />
-      </section>
+      </DetailSection>
 
-      <LeadLabels workspaceId={workspaceId} leadId={lead.id} />
+      <LeadLabels workspaceId={workspaceId} leadId={lead.id} tone="b" />
 
-      <LeadTasks workspaceId={workspaceId} leadId={lead.id} />
+      <LeadTasks workspaceId={workspaceId} leadId={lead.id} tone="a" />
 
-      <section className="border-t pt-4">
-        <h3 className="mb-3 text-sm font-medium">Timeline</h3>
+      <DetailSection title="Timeline" icon={History} tone="b" className="mb-0">
         <LeadTimeline
           actions={timeline.data?.items ?? []}
           stages={stages}
@@ -699,7 +700,7 @@ export function LeadDetail({
           dispositions={dispositions}
           actionTypes={actionTypes}
         />
-      </section>
+      </DetailSection>
     </aside>
   )
 }

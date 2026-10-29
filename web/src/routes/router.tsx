@@ -27,6 +27,7 @@ import { TasksPage } from '@/routes/TasksPage'
 import { TemplatesPage } from '@/routes/TemplatesPage'
 import { VoiceExtractionSettingsPage } from '@/routes/VoiceExtractionSettingsPage'
 import { WalletPage } from '@/routes/WalletPage'
+import { CallingNumbersPage } from '@/routes/CallingNumbersPage'
 import { VoiceVariablesPage } from '@/routes/VoiceVariablesPage'
 import { WorkspacePickerPage } from '@/routes/WorkspacePickerPage'
 
@@ -60,6 +61,7 @@ export const router = createBrowserRouter([
       { path: 'edit-report', element: <EditReportPage /> },
       { path: 'templates', element: <TemplatesPage /> },
       { path: 'members', element: <MembersPage /> },
+      { path: 'wallet', element: <WalletPage /> },
       // The deployment status page moved under Settings with the rest of the
       // operator surface. The old path still works so bookmarks and the
       // existing test suite do not break on a redesign.
@@ -81,7 +83,9 @@ export const router = createBrowserRouter([
           { path: 'integrations', element: <IntegrationsPage /> },
           { path: 'voice-extraction', element: <VoiceExtractionSettingsPage /> },
           { path: 'voice-variables', element: <VoiceVariablesPage /> },
-          { path: 'wallet', element: <WalletPage /> },
+          { path: 'calling-numbers', element: <CallingNumbersPage /> },
+          // Moved to the main sidebar; old links still land on it.
+          { path: 'wallet', element: <Navigate to="/wallet" replace /> },
           { path: 'system', element: <SystemStatusPage /> },
         ],
       },
