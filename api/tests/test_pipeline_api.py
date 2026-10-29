@@ -8,6 +8,8 @@ endpoints rather than menus.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
@@ -447,12 +449,13 @@ async def test_an_action_field_rejects_a_lead_only_type(
 
 
 async def test_a_disabled_feature_refuses_at_the_endpoint(
-    api: AsyncClient, workspace: WorkspaceFixture
+    api: AsyncClient, workspace: WorkspaceFixture, make_operator: Callable[..., None]
 ) -> None:
     """CLAUDE.md: "A disabled feature returns 403, it doesn't merely hide a menu
     item." This is the test that proves the flag is a boundary, not decoration.
     """
     headers = await _admin(api, workspace)
+    make_operator(workspace.owner.user.email)
 
     enabled = await api.get(workspace.path("/settings/custom-actions"), headers=headers)
     assert enabled.status_code == 200
@@ -474,9 +477,10 @@ async def test_a_disabled_feature_refuses_at_the_endpoint(
 
 
 async def test_an_unknown_feature_flag_is_rejected(
-    api: AsyncClient, workspace: WorkspaceFixture
+    api: AsyncClient, workspace: WorkspaceFixture, make_operator: Callable[..., None]
 ) -> None:
     headers = await _admin(api, workspace)
+    make_operator(workspace.owner.user.email)
     response = await api.patch(
         workspace.path("/settings/preferences"),
         headers=headers,

@@ -168,13 +168,18 @@ class BolnaCallRequest:
     agent_id: str
     recipient_phone_number: str
     user_data: dict[str, Any]
+    #: The number to call from (docs/16). None: Bolna's default number.
+    from_phone_number: str | None = None
 
     def body(self) -> dict[str, Any]:
-        return {
+        body: dict[str, Any] = {
             "agent_id": self.agent_id,
             "recipient_phone_number": self.recipient_phone_number,
             "user_data": self.user_data,
         }
+        if self.from_phone_number:
+            body["from_phone_number"] = self.from_phone_number
+        return body
 
 
 @dataclasses.dataclass(frozen=True, slots=True)

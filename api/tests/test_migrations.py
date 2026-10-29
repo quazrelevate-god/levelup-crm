@@ -77,6 +77,8 @@ EXPECTED_REVISIONS = [
     "0018_voice_test_calls",
     # Approval for AI calling (docs/15): batches dial approved leads only.
     "0019_voice_approval",
+    # Calling numbers (docs/16): which numbers a workspace's AI calls come from.
+    "0020_voice_calling_numbers",
 ]
 
 

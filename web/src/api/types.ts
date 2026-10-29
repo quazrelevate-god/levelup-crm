@@ -51,6 +51,8 @@ export interface TokenResponse {
 export interface MeResponse {
   readonly user: UserSummary
   readonly memberships: readonly MembershipSummary[]
+  /** The platform operator (docs/16): creates workspaces, sets seats and paid modules. */
+  readonly is_platform_operator: boolean
 }
 
 export interface ResolvedPermissions {

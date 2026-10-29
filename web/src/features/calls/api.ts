@@ -54,6 +54,8 @@ export interface Extraction {
 
 export interface VoiceCallDetail extends VoiceCallSummary {
   readonly recipient_phone: string
+  /** The calling number it went out from; null on Bolna's default number. */
+  readonly caller_phone: string | null
   readonly transcript: string | null
   readonly extracted_data: Record<string, unknown>
   /** The same extractions, flattened for display — grouped or not. */

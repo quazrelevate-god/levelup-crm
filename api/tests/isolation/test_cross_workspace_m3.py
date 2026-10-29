@@ -11,6 +11,8 @@ guard reads them.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 from httpx import AsyncClient
 from tests.factories import WorkspaceFixture
@@ -133,6 +135,7 @@ async def test_custom_action_route_in_another_workspace_returns_404(
 async def test_a_disabled_feature_is_still_404_not_403_across_a_boundary(
     api: AsyncClient,
     tenants: TenantPair,
+    make_operator: Callable[..., None],
 ) -> None:
     """Ordering matters: the scoping check must run *before* the feature check.
 
@@ -140,6 +143,7 @@ async def test_a_disabled_feature_is_still_404_not_403_across_a_boundary(
     whether workspace B has the module enabled — a small leak, but a real one,
     and exactly the kind that accumulates into a profile of another tenant.
     """
+    make_operator(tenants.b.owner.user.email)  # switching modules is the operator's
     disabled = await api.patch(
         tenants.b.path("/settings/preferences"),
         headers=tenants.b.owner.auth,

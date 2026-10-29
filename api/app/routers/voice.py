@@ -34,8 +34,11 @@ from fastapi import APIRouter, Depends, Path, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.api_keys import ApiKeyScope, require_api_key, resolve_api_key
+from app.auth.deps import CurrentUser, get_current_user
+from app.auth.operator import is_platform_operator, require_platform_operator
 from app.dependencies import get_session
 from app.errors import api_error
+from app.fields.registry import FieldValueError, ValidationContext, normalise_phone
 from app.integrations.bolna import (
     BolnaClient,
     BolnaSettings,
@@ -50,6 +53,8 @@ from app.schemas.voice import (
     VoiceApprovalRead,
     VoiceApprovalWrite,
     VoiceCallDetailRead,
+    VoiceCallingNumbersRead,
+    VoiceCallingNumbersWrite,
     VoiceCallLeadRef,
     VoiceCallPreviewRead,
     VoiceCallPreviewRequest,
@@ -74,7 +79,7 @@ from app.services.voice_history import CallWithLead, VoiceCallHistoryService
 from app.services.voice_hours import parse_calling_hours
 from app.services.voice_postcall import CallSummarizer, extractions_from_payload
 from app.services.voice_variables import variable_catalogue
-from app.tenancy.scoping import WorkspaceScope, require_workspace
+from app.tenancy.scoping import WorkspaceScope, require_workspace, require_workspace_admin
 
 router = APIRouter(tags=["voice"])
 
@@ -283,6 +288,59 @@ async def update_voice_summary(
     # durable, not just what this request thinks it wrote.
     context = await voice.get_context(lead)
     return VoiceSummaryUpdateResult(context=_to_read(context), written=written)
+
+
+# --- calling numbers (docs/16) ----------------------------------------------
+
+
+@router.get(
+    "/voice/calling-numbers",
+    response_model=VoiceCallingNumbersRead,
+    summary="The numbers this workspace's AI calls go out from",
+)
+async def get_calling_numbers(
+    request: Request,
+    scope: Annotated[WorkspaceScope, Depends(require_workspace_admin)],
+    current_user: Annotated[CurrentUser, Depends(get_current_user)],
+) -> VoiceCallingNumbersRead:
+    return VoiceCallingNumbersRead(
+        numbers=list(scope.workspace.voice_calling_numbers or []),
+        editable=is_platform_operator(request.app.state.settings, current_user),
+    )
+
+
+@router.put(
+    "/voice/calling-numbers",
+    response_model=VoiceCallingNumbersRead,
+    summary="Set the calling numbers, in rotation order (operator only)",
+)
+async def set_calling_numbers(
+    payload: VoiceCallingNumbersWrite,
+    scope: Annotated[WorkspaceScope, Depends(require_workspace)],
+    _operator: Annotated[CurrentUser, Depends(require_platform_operator)],
+) -> VoiceCallingNumbersRead:
+    """The numbers are bought in the operator's Bolna account, so they are the
+    operator's to assign. Swapping a number flagged as spam is one save: the
+    next call goes out from the new list, no deploy and no agent change.
+    """
+    context = ValidationContext(
+        default_country_code=scope.workspace.default_country_code,
+        currency=scope.workspace.currency,
+        timezone=scope.workspace.timezone,
+    )
+    numbers: list[str] = []
+    for raw in payload.numbers:
+        if not raw.strip():
+            continue
+        try:
+            normalised = normalise_phone(raw, context)
+        except FieldValueError as exc:
+            raise api_error(422, "invalid_calling_number", f"{raw!r}: {exc.message}") from exc
+        if normalised and normalised not in numbers:
+            numbers.append(normalised)
+    scope.workspace.voice_calling_numbers = numbers
+    await scope.session.commit()
+    return VoiceCallingNumbersRead(numbers=numbers, editable=True)
 
 
 # --- approval for AI calling (docs/15) -------------------------------------
@@ -562,6 +620,7 @@ async def get_voice_call(
     return VoiceCallDetailRead(
         **base.model_dump(),
         recipient_phone=call.recipient_phone,
+        caller_phone=call.caller_phone,
         transcript=call.transcript,
         extracted_data=extracted,
         extractions=[

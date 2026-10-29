@@ -14,7 +14,7 @@ that correctly and keeps the suite runnable without a second container.
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 
 os.environ.setdefault("ENVIRONMENT", "test")
 os.environ.setdefault("DEBUG", "true")
@@ -245,3 +245,20 @@ async def api(wired_app: FastAPI) -> AsyncIterator[AsyncClient]:
     transport = ASGITransport(app=wired_app)
     async with AsyncClient(transport=transport, base_url="http://testserver") as http_client:
         yield http_client
+
+
+@pytest.fixture
+def make_operator(wired_app: FastAPI) -> Callable[..., None]:
+    """Name the platform operator for one test (docs/16).
+
+    Nobody is the operator by default, exactly as in a deployment that forgot
+    to set `PLATFORM_OPERATOR_EMAILS`. The app fixture is per test, so the
+    change cannot leak into the next one.
+    """
+
+    def _make(*emails: str) -> None:
+        wired_app.state.settings = wired_app.state.settings.model_copy(
+            update={"platform_operator_emails": list(emails)}
+        )
+
+    return _make

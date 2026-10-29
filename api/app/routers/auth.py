@@ -23,6 +23,7 @@ from app.auth.deps import (
     get_password_hasher,
     get_token_service,
 )
+from app.auth.operator import is_platform_operator
 from app.auth.passwords import PasswordHasherService
 from app.auth.rate_limit import AuthRateLimiter, RateLimitExceededError
 from app.auth.tokens import TokenService
@@ -203,6 +204,7 @@ async def change_password(
 
 @router.get("/me", response_model=MeResponse, summary="The caller and their memberships")
 async def me(
+    request: Request,
     current_user: Annotated[CurrentUser, Depends(get_current_user)],
     service: Annotated[AuthService, Depends(_auth_service)],
 ) -> MeResponse:
@@ -210,6 +212,7 @@ async def me(
     return MeResponse(
         user=UserSummary.model_validate(current_user),
         memberships=_membership_summaries(memberships),
+        is_platform_operator=is_platform_operator(request.app.state.settings, current_user),
     )
 
 

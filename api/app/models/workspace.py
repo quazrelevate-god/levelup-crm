@@ -103,6 +103,11 @@ class Workspace(Base, TimestampMixin):
     seat_limit: Mapped[int] = mapped_column(
         Integer, nullable=False, default=3, server_default=text("3")
     )
+    #: The operator's numbers this workspace's AI calls go out from, in
+    #: rotation order (docs/16). Empty: Bolna's default number.
+    voice_calling_numbers: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=text("true")
     )

@@ -15,9 +15,11 @@ import uuid
 from typing import Annotated
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 
-from app.errors import api_error
+from app.auth.deps import CurrentUser, get_current_user
+from app.auth.operator import is_platform_operator
+from app.errors import api_error, forbidden
 from app.models.enums import ActionFieldType, StageKind
 from app.schemas.field import ActionFieldRead
 from app.schemas.pipeline import (
@@ -493,15 +495,29 @@ async def get_preferences(
 @router.patch("/preferences", response_model=WorkspacePreferencesRead, summary="Update preferences")
 async def update_preferences(
     payload: WorkspacePreferencesUpdate,
+    request: Request,
     scope: Annotated[WorkspaceScope, Depends(require_workspace_admin)],
+    current_user: Annotated[CurrentUser, Depends(get_current_user)],
 ) -> WorkspacePreferencesRead:
     """The localisation seam (§5).
 
     Changing the country code does not retro-normalise stored phone numbers:
     they were normalised with the code in force when they were written, and
     rewriting them would silently change customer data.
+
+    Feature modules are part of what a client pays for, so switching them is
+    the platform operator's (docs/16), here exactly as on `PATCH /workspaces`.
     """
     workspace = scope.workspace
+
+    if payload.features is not None and not is_platform_operator(
+        request.app.state.settings, current_user
+    ):
+        raise forbidden(
+            "operator_only",
+            "Seats and paid modules are changed by your account manager.",
+            fields=["features"],
+        )
 
     if payload.timezone is not None:
         try:

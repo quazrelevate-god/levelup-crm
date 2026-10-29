@@ -41,7 +41,7 @@ function availabilityVariant(status: AvailabilityStatus) {
  */
 const ACTION_MESSAGES: Record<string, string> = {
   seat_limit_reached:
-    'All licensed seats are in use. Revoke a seat, or raise the seat limit in workspace settings.',
+    'All licensed seats are in use. Revoke a seat, or ask your account manager for more seats.',
   cannot_deactivate_self: 'You cannot deactivate your own membership. Ask another administrator.',
   use_deactivate_endpoint: 'Use Deactivate so any open leads are reassigned first.',
   not_own_membership: 'You can only change your own availability.',

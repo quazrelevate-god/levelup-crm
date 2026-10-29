@@ -26,7 +26,8 @@ interface Props {
 
 const MESSAGES: Record<string, string> = {
   member_exists: 'That person is already a member of this workspace.',
-  seat_limit_reached: 'All licensed seats are in use. Free one up, or raise the seat limit.',
+  seat_limit_reached:
+    'All licensed seats are in use. Free one up, or ask your account manager for more seats.',
   not_found: 'That permission template no longer exists. Reload and try again.',
 }
 

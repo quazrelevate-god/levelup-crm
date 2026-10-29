@@ -103,6 +103,8 @@ class MeResponse(BaseModel):
 
     user: UserSummary
     memberships: list[MembershipSummary]
+    #: The platform operator (docs/16): may create workspaces and change seats.
+    is_platform_operator: bool = False
 
 
 class ResolvedPermissions(BaseModel):

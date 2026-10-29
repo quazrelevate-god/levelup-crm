@@ -147,6 +147,11 @@ class Settings(BaseSettings):
     #: check is off, which is correct behind a proxy that rewrites the peer
     #: address and wrong on a directly exposed host.
     bolna_webhook_allowed_ips: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    #: Emails of the platform operator — whoever sells this deployment (docs/16).
+    #: Only they may create workspaces, change a workspace's seat limit or switch
+    #: its paid feature modules. Comma-separated or a JSON list; empty means
+    #: nobody can, which is the safe default.
+    platform_operator_emails: Annotated[list[str], NoDecode] = Field(default_factory=list)
     #: Match an incoming call to a lead by its phone number when the payload
     #: carries no `crm_lead_id` and the CRM did not place the call. Required for
     #: inbound calls and for any call started from Bolna's own dashboard.
@@ -203,6 +208,19 @@ class Settings(BaseSettings):
             return value
         text = value.strip()
         return json.loads(text) if text else []
+
+    @field_validator("platform_operator_emails", mode="before")
+    @classmethod
+    def _parse_operator_emails(cls, value: object) -> object:
+        """`a@x.com,b@y.com`, a JSON list, or empty for nobody."""
+        if not isinstance(value, str):
+            return value
+        text = value.strip()
+        if not text:
+            return []
+        if text.startswith("["):
+            return json.loads(text)
+        return [part.strip() for part in text.split(",") if part.strip()]
 
     @field_validator("voice_calling_hours")
     @classmethod

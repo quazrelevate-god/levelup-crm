@@ -10,11 +10,12 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.deps import CurrentUser, get_current_user
+from app.auth.operator import is_platform_operator, require_platform_operator
 from app.dependencies import get_session
 from app.errors import forbidden
 from app.models import Membership, Workspace
@@ -94,10 +95,13 @@ async def list_workspaces(
 )
 async def create_workspace(
     payload: WorkspaceCreate,
-    current_user: Annotated[CurrentUser, Depends(get_current_user)],
+    current_user: Annotated[CurrentUser, Depends(require_platform_operator)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> WorkspaceDetail:
     """Create a workspace and make the caller its Root member.
+
+    Operator only (docs/16): a workspace is a sold account, so a signed-in
+    client cannot mint another one, with seats of their choosing, for free.
 
     Provisioning creates structure and no taxonomy — see
     `app.services.provisioning` for exactly what that means and why the list
@@ -130,6 +134,10 @@ async def get_workspace(
     return _detail(scope.workspace, seats_used=used)
 
 
+#: Workspace settings that are part of what the client pays for.
+OPERATOR_ONLY_SETTINGS: frozenset[str] = frozenset({"seat_limit", "features"})
+
+
 @router.patch(
     "/workspaces/{workspace_id}",
     response_model=WorkspaceDetail,
@@ -137,10 +145,22 @@ async def get_workspace(
 )
 async def update_workspace(
     payload: WorkspaceUpdate,
+    request: Request,
     scope: Annotated[WorkspaceScope, Depends(require_workspace_admin)],
+    current_user: Annotated[CurrentUser, Depends(get_current_user)],
 ) -> WorkspaceDetail:
     workspace = scope.workspace
     updates = payload.model_dump(exclude_unset=True)
+
+    # What the client bought — seats and paid modules — is the operator's to
+    # change (docs/16). A workspace admin keeps everything else here.
+    sold = sorted(OPERATOR_ONLY_SETTINGS & updates.keys())
+    if sold and not is_platform_operator(request.app.state.settings, current_user):
+        raise forbidden(
+            "operator_only",
+            "Seats and paid modules are changed by your account manager.",
+            fields=sold,
+        )
 
     if "seat_limit" in updates:
         used, _ = await _seat_usage_from_scope(scope)

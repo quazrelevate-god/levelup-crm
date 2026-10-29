@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from io import BytesIO
 
 import pytest
@@ -247,7 +248,9 @@ async def test_an_unlicensed_member_cannot_use_the_api(
 async def test_seat_limit_cannot_be_lowered_below_current_usage(
     api: AsyncClient,
     team: WorkspaceFixture,
+    make_operator: Callable[..., None],
 ) -> None:
+    make_operator(team.owner.user.email)
     response = await api.patch(
         team.path(),
         headers=team.owner.auth,

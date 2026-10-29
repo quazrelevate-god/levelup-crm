@@ -8,6 +8,8 @@ unpick once customers have data hanging off it.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
@@ -163,6 +165,7 @@ async def test_create_workspace_endpoint_provisions_and_defaults_locale(
     api: AsyncClient,
     db_session: AsyncSession,
     hasher: PasswordHasherService,
+    make_operator: Callable[..., None],
 ) -> None:
     seed = await build_workspace(
         db_session,
@@ -170,6 +173,7 @@ async def test_create_workspace_endpoint_provisions_and_defaults_locale(
         name="Seed",
         owner_email="creator@example.com",
     )
+    make_operator("creator@example.com")
     await login(api, seed.owner)
 
     response = await api.post(
@@ -201,6 +205,7 @@ async def test_create_workspace_rejects_an_unknown_timezone(
     api: AsyncClient,
     db_session: AsyncSession,
     hasher: PasswordHasherService,
+    make_operator: Callable[..., None],
 ) -> None:
     """The scheduler evaluates cron in this zone from M8; an unknown one would
     fail at 3am rather than at signup."""
@@ -210,6 +215,7 @@ async def test_create_workspace_rejects_an_unknown_timezone(
         name="Seed TZ",
         owner_email="tz@example.com",
     )
+    make_operator("tz@example.com")
     await login(api, seed.owner)
 
     response = await api.post(
@@ -224,6 +230,7 @@ async def test_duplicate_names_get_distinct_slugs(
     api: AsyncClient,
     db_session: AsyncSession,
     hasher: PasswordHasherService,
+    make_operator: Callable[..., None],
 ) -> None:
     """Two customers may legitimately be called the same thing."""
     seed = await build_workspace(
@@ -232,6 +239,7 @@ async def test_duplicate_names_get_distinct_slugs(
         name="Seed Slug",
         owner_email="slug@example.com",
     )
+    make_operator("slug@example.com")
     await login(api, seed.owner)
 
     first = await api.post(

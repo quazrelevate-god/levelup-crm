@@ -131,6 +131,9 @@ class VoiceCallExecution(TenantModel):
     agent_id: Mapped[str | None] = mapped_column(String(120))
     #: E.164, normalised through the workspace's default country code (rule 12).
     recipient_phone: Mapped[str] = mapped_column(String(32), nullable=False)
+    #: The calling number this call went out from (docs/16); NULL when Bolna
+    #: used its default number.
+    caller_phone: Mapped[str | None] = mapped_column(String(32))
     #: `crm_idempotency` from contract §4. Generated once, here, per trigger —
     #: the value you want the first time two triggers race.
     idempotency_key: Mapped[uuid.UUID] = mapped_column(

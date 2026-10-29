@@ -59,6 +59,8 @@ from collections.abc import Callable
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import func, select
+
 from app.errors import api_error, not_found
 from app.fields.registry import FieldValueError, ValidationContext, normalise_phone
 from app.fields.rendering import render_for_voice
@@ -508,9 +510,11 @@ class VoiceCallService:
             context, idempotency_key=idempotency_key, purpose=purpose
         )
 
+        caller_phone = await self._next_calling_number()
         row = VoiceCallExecution(
             lead_id=lead.id,
             recipient_phone=recipient,
+            caller_phone=caller_phone,
             agent_id=resolved_agent,
             idempotency_key=idempotency_key,
             status=VoiceCallStatus.QUEUED,
@@ -528,6 +532,7 @@ class VoiceCallService:
                 agent_id=resolved_agent,
                 recipient_phone_number=recipient,
                 user_data=user_data,
+                from_phone_number=caller_phone,
             )
         )
 
@@ -549,6 +554,23 @@ class VoiceCallService:
             user_data=user_data,
             error=result.error,
         )
+
+    async def _next_calling_number(self) -> str | None:
+        """The workspace's next calling number, in turn (docs/16).
+
+        Rotating by how many calls the workspace has placed spreads them evenly,
+        so no one number makes every call — the pattern carriers flag as spam.
+        None when no numbers are set, and Bolna uses its default number.
+        """
+        numbers = list(self._workspace.voice_calling_numbers or [])
+        if not numbers:
+            return None
+        placed = await self._session.execute(
+            select(func.count())
+            .select_from(VoiceCallExecution)
+            .where(VoiceCallExecution.workspace_id == self._session.workspace_id)
+        )
+        return str(numbers[int(placed.scalar() or 0) % len(numbers)])
 
     def _test_recipient(self, phone: str) -> str:
         """The tester's number, normalised with the workspace's country code."""

@@ -87,6 +87,21 @@ class VoiceSummaryUpdateResult(BaseModel):
 # --- Phase 2: the Bolna integration ---------------------------------------
 
 
+class VoiceCallingNumbersWrite(BaseModel):
+    """The operator's numbers a workspace's AI calls go out from (docs/16)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    numbers: list[str] = Field(default_factory=list, max_length=20)
+
+
+class VoiceCallingNumbersRead(BaseModel):
+    #: In rotation order. Empty: Bolna's default number.
+    numbers: list[str]
+    #: Whether the caller may change them — only the platform operator.
+    editable: bool
+
+
 class VoiceApprovalWrite(BaseModel):
     """Switch a lead's approval for AI calling on or off (docs/15)."""
 
@@ -379,6 +394,8 @@ class VoiceCallDetailRead(VoiceCallSummaryRead):
     """One AI call, in full. The dedicated call page's read."""
 
     recipient_phone: str
+    #: The calling number it went out from (docs/16); None on Bolna's default.
+    caller_phone: str | None = None
     transcript: str | None = None
     extracted_data: dict[str, Any] = Field(default_factory=dict)
     #: The same extractions, flattened for display: one entry per extracted

@@ -534,11 +534,17 @@ VOICE_COLLECTION_WRITE_ROUTES: list[tuple[str, str]] = [
     # reference exactly like placing a call, so it is probed the same way.
     ("POST", "/voice/calls/preview"),
     ("POST", "/voice/extraction-mappings"),
+    # docs/16: setting another workspace's calling numbers.
+    ("PUT", "/voice/calling-numbers"),
 ]
 
 #: docs/15: the variable catalogue — the workspace's own field names plus the
 #: reserved ones. No ids to leak, but another workspace's field names would be.
-VOICE_CATALOGUE_ROUTES: list[tuple[str, str]] = [("GET", "/voice/variables")]
+VOICE_CATALOGUE_ROUTES: list[tuple[str, str]] = [
+    ("GET", "/voice/variables"),
+    # docs/16: which numbers this workspace calls from.
+    ("GET", "/voice/calling-numbers"),
+]
 
 #: A lookup by natural key rather than id: B's phone number, asked of A.
 VOICE_LOOKUP_ROUTES: list[tuple[str, str]] = [("GET", "/voice/context")]
@@ -550,6 +556,7 @@ VOICE_MACHINE_ROUTES: list[tuple[str, str]] = [("POST", "/voice/executions")]
 
 _VOICE_BODIES: dict[str, dict[str, object]] = {
     "/voice/approvals/{lead_id}": {"approved": True},
+    "/voice/calling-numbers": {"numbers": ["+919000000999"]},
     "/voice/context/{lead_id}/summary": {
         "summary": "Smuggled by an outsider.",
         "external_id": "smuggled-1",

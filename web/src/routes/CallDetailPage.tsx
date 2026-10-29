@@ -63,6 +63,7 @@ function Facts({ call }: { readonly call: VoiceCallDetail }) {
     ['Bolna execution ID', toDisplayStringOr(call.execution_id)],
     ['Agent ID', toDisplayStringOr(call.agent_id)],
     ['Recipient phone', call.recipient_phone],
+    ['Called from', call.caller_phone ?? "Bolna's default number"],
     ['Status', `${formatCallStatus(call.bolna_status ?? call.status)} (${call.status})`],
     ['Duration', `${call.duration_seconds ?? 0} seconds`],
     ['Started at', formatCallMoment(call.dispatched_at ?? call.created_at)],
