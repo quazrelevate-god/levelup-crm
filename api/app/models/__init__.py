@@ -18,7 +18,7 @@ from app.models.assignment import (
     SalesGroupMember,
     ScheduledReport,
 )
-from app.models.billing import Wallet, WalletTransaction
+from app.models.billing import VoiceNumberRequest, Wallet, WalletTransaction
 from app.models.dashboard import Dashboard
 from app.models.enums import (
     ActionDirection,
@@ -141,6 +141,7 @@ __all__ = [
     "VoiceCallExecution",
     "VoiceCallStatus",
     "VoiceExtractionMapping",
+    "VoiceNumberRequest",
     "Wallet",
     "WalletTransaction",
     "WalletTransactionKind",

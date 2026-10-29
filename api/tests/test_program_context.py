@@ -388,6 +388,8 @@ async def test_existing_user_data_is_unchanged_and_two_keys_are_added(
             # sent on every call with or without a knowledge base; tested in
             # `test_voice_followup.py`.
             "call_opening",
+            # Who dialled whom (docs/16); tested in `test_voice_calling_numbers.py`.
+            "crm_call_direction",
         }
     )
     assert added == {"crm_program_name", "crm_program_context"}

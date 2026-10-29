@@ -31,7 +31,8 @@ export interface Wallet {
   readonly updated_at: string
 }
 
-export type WalletTransactionKind = 'TOPUP' | 'DISCOUNT' | 'ADJUSTMENT' | 'CALL_CHARGE'
+export type WalletTransactionKind =
+  'TOPUP' | 'DISCOUNT' | 'ADJUSTMENT' | 'CALL_CHARGE' | 'NUMBER_RENTAL'
 
 export interface WalletTransaction {
   readonly id: string

@@ -8,6 +8,7 @@ country code, timezone, currency and taxonomy are database rows, not env vars.
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from functools import lru_cache
 from typing import Annotated, Literal
 
@@ -167,6 +168,10 @@ class Settings(BaseSettings):
     #: the window is refused before anything is written or sent. Empty disables
     #: the check, which only a test suite should do.
     voice_calling_hours: str = "09:00-21:00"
+    #: What a client pays per calling number per 30 days, in the workspace's
+    #: currency, charged from the wallet (docs/16). About $10 against Bolna's $5.
+    #: Applies to new requests; a number already rented keeps its price.
+    voice_number_monthly_price: Decimal = Decimal("850.00")
 
     #: Base URL of the LevelUp Learning knowledge base, e.g.
     #: https://kb-production.up.railway.app. When set, the voice trigger reads

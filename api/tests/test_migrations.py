@@ -79,6 +79,8 @@ EXPECTED_REVISIONS = [
     "0019_voice_approval",
     # Calling numbers (docs/16): which numbers a workspace's AI calls come from.
     "0020_voice_calling_numbers",
+    # Number requests (docs/16): clients rent calling numbers from the wallet.
+    "0021_voice_number_requests",
 ]
 
 

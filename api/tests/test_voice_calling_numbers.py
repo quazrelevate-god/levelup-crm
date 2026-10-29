@@ -177,3 +177,103 @@ def test_the_request_only_names_a_number_when_there_is_one() -> None:
     )
     assert "from_phone_number" not in plain.body()
     assert chosen.body()["from_phone_number"] == FIRST
+
+
+# --- 4. a lead calling back (caller lookup) -------------------------------------
+
+
+async def _api_key(api: AsyncClient, ws: WorkspaceFixture) -> str:
+    response = await api.post(
+        ws.path("/settings/api-keys"),
+        headers=ws.owner.auth,
+        json={"name": "Bolna lookup", "permission_template_id": str(ws.templates["Root"].id)},
+    )
+    assert response.status_code == 201, response.text
+    return str(response.json()["key"])
+
+
+async def _lookup(api: AsyncClient, key: str | None, number: str) -> Any:
+    headers = {"Authorization": f"Bearer {key}"} if key else {}
+    return await api.get(
+        "/api/v1/voice/bolna/lookup", headers=headers, params={"contact_number": number}
+    )
+
+
+@pytest.mark.integration
+async def test_a_known_caller_gets_their_details_marked_inbound(
+    api: AsyncClient, ws: WorkspaceFixture
+) -> None:
+    await login(api, ws.owner)
+    lead = await api.post(
+        ws.path("/leads"),
+        headers=ws.owner.auth,
+        json={"values": {"name": "Saneha", "phone": "+919000000801"}},
+    )
+    assert lead.status_code == 201, lead.text
+    key = await _api_key(api, ws)
+
+    # Bolna sends the caller's number as the carrier gives it.
+    response = await _lookup(api, key, "+919000000801")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["crm_call_direction"] == "inbound"
+    assert body["name"] == "Saneha"
+    assert body["crm_lead_id"] == lead.json()["id"]
+    assert body["crm_call_count"] == "0"
+
+
+async def test_an_unknown_caller_gets_nothing_personal(
+    api: AsyncClient, ws: WorkspaceFixture
+) -> None:
+    await login(api, ws.owner)
+    key = await _api_key(api, ws)
+
+    response = await _lookup(api, key, "+919000000899")
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"crm_call_direction": "inbound"}
+
+
+@pytest.mark.parametrize("key", [None, "lcrm_not-a-real-key"])
+async def test_the_lookup_needs_a_valid_key(
+    api: AsyncClient, ws: WorkspaceFixture, key: str | None
+) -> None:
+    response = await _lookup(api, key, "+919000000801")
+    assert response.status_code == 401, response.text
+
+
+async def test_another_workspace_s_key_cannot_look_up_this_workspace_s_lead(
+    api: AsyncClient,
+    ws: WorkspaceFixture,
+    db_session: AsyncSession,
+    hasher: PasswordHasherService,
+) -> None:
+    """The key decides the workspace: B's key finds nothing of A's."""
+    await login(api, ws.owner)
+    created = await api.post(
+        ws.path("/leads"),
+        headers=ws.owner.auth,
+        json={"values": {"name": "Private", "phone": "+919000000802"}},
+    )
+    assert created.status_code == 201, created.text
+    other = await build_workspace(
+        db_session, hasher, name="Other Co", owner_email="owner@other-numbers.example"
+    )
+    await login(api, other.owner)
+    other_key = await _api_key(api, other)
+
+    response = await _lookup(api, other_key, "+919000000802")
+
+    assert response.json() == {"crm_call_direction": "inbound"}
+
+
+@pytest.mark.integration
+async def test_an_outbound_call_says_so(
+    api: AsyncClient, ws: WorkspaceFixture, bolna: RecordingBolnaClient
+) -> None:
+    await login(api, ws.owner)
+
+    await _call(api, ws, "+919000000901")
+
+    assert bolna.calls[-1].user_data["crm_call_direction"] == "outbound"

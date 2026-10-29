@@ -515,6 +515,9 @@ VOICE_ID_ROUTES: list[tuple[str, str]] = [
     ("PUT", "/voice/context/{lead_id}/summary"),
     # docs/15: approving a lead for AI calling decides who gets dialled.
     ("PUT", "/voice/approvals/{lead_id}"),
+    # docs/16: fulfilling or cancelling another workspace's number request.
+    ("POST", "/voice/number-requests/{request_id}/fulfil"),
+    ("POST", "/voice/number-requests/{request_id}/cancel"),
     ("GET", "/voice/calls/{call_id}"),
     ("GET", "/voice/extraction-mappings/{mapping_id}"),
     ("PATCH", "/voice/extraction-mappings/{mapping_id}"),
@@ -524,6 +527,7 @@ VOICE_ID_ROUTES: list[tuple[str, str]] = [
 VOICE_COLLECTION_ROUTES: list[str] = [
     "/voice/calls",
     "/voice/extraction-mappings",
+    "/voice/number-requests",
 ]
 
 #: `POST /voice/calls` takes its lead by reference (an id or a phone number) in
@@ -536,6 +540,8 @@ VOICE_COLLECTION_WRITE_ROUTES: list[tuple[str, str]] = [
     ("POST", "/voice/extraction-mappings"),
     # docs/16: setting another workspace's calling numbers.
     ("PUT", "/voice/calling-numbers"),
+    # docs/16: requesting a number on another workspace's wallet.
+    ("POST", "/voice/number-requests"),
 ]
 
 #: docs/15: the variable catalogue — the workspace's own field names plus the
@@ -557,6 +563,8 @@ VOICE_MACHINE_ROUTES: list[tuple[str, str]] = [("POST", "/voice/executions")]
 _VOICE_BODIES: dict[str, dict[str, object]] = {
     "/voice/approvals/{lead_id}": {"approved": True},
     "/voice/calling-numbers": {"numbers": ["+919000000999"]},
+    "/voice/number-requests": {"region": "Smuggled"},
+    "/voice/number-requests/{request_id}/fulfil": {"phone_number": "+919000000998"},
     "/voice/context/{lead_id}/summary": {
         "summary": "Smuggled by an outsider.",
         "external_id": "smuggled-1",

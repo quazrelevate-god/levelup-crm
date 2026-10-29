@@ -21,11 +21,13 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any
 
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient, Response
+from sqlalchemy.ext.asyncio import AsyncSession
 from tests.factories import WorkspaceFixture
 from tests.isolation.conftest import TenantPair
 from tests.isolation.test_cross_workspace import (
@@ -38,6 +40,9 @@ from tests.isolation.test_cross_workspace import (
 )
 
 from app.integrations.bolna import BolnaSettings, RecordingBolnaClient
+from app.models.enums import WalletTransactionKind
+from app.services.wallet import WalletService
+from app.tenancy.session import ScopedSession
 
 pytestmark = pytest.mark.integration
 
@@ -64,6 +69,8 @@ class VoiceRecords:
     execution_id: str
     mapping_id: str
     api_key: str
+    #: docs/16: a pending calling-number request, paid from the wallet.
+    request_id: str
 
 
 @pytest.fixture
@@ -93,6 +100,7 @@ def _execution_body(
 
 async def _populate(
     api: AsyncClient,
+    session: AsyncSession,
     fixture: WorkspaceFixture,
     *,
     name: str,
@@ -140,22 +148,38 @@ async def _populate(
     )
     assert mapping.status_code == 201, mapping.text
 
+    # A funded wallet and a number request (docs/16). After the call, so the
+    # call above stays unmetered and every earlier assertion is unchanged.
+    wallet = WalletService(ScopedSession(session, fixture.id), workspace=fixture.workspace)
+    await wallet.create(rate_per_minute=Decimal("10"))
+    await wallet.record(WalletTransactionKind.TOPUP, Decimal("2000"), note="t", recorded_by="t")
+    await session.commit()
+    requested = await api.post(
+        fixture.path("/voice/number-requests"), headers=headers, json={"region": name}
+    )
+    assert requested.status_code == 201, requested.text
+
     return VoiceRecords(
         lead_id=lead_id,
         call_id=triggered.json()["call_id"],
         execution_id=execution_id,
         mapping_id=mapping.json()["id"],
         api_key=api_key,
+        request_id=requested.json()["id"],
     )
 
 
 @pytest.fixture
 async def voice(
-    api: AsyncClient, tenants: TenantPair, bolna: RecordingBolnaClient
+    api: AsyncClient,
+    tenants: TenantPair,
+    bolna: RecordingBolnaClient,
+    db_session: AsyncSession,
 ) -> tuple[VoiceRecords, VoiceRecords]:
     """The same shapes of voice data in A and in B."""
     a = await _populate(
         api,
+        db_session,
         tenants.a,
         name="Arun In A",
         phone=PHONE_A,
@@ -165,6 +189,7 @@ async def voice(
     )
     b = await _populate(
         api,
+        db_session,
         tenants.b,
         name=B_NAME,
         phone=PHONE_B,
@@ -180,6 +205,7 @@ def _ids(records: VoiceRecords) -> dict[str, str]:
         "lead_id": records.lead_id,
         "call_id": records.call_id,
         "mapping_id": records.mapping_id,
+        "request_id": records.request_id,
     }
 
 
@@ -225,6 +251,10 @@ async def _b_is_untouched(api: AsyncClient, tenants: TenantPair, b: VoiceRecords
 
     mappings = await api.get(tenants.b.path("/voice/extraction-mappings"), headers=headers)
     assert [item["id"] for item in mappings.json()] == [b.mapping_id]
+
+    # docs/16: B's number request is still B's, still pending, still paid for.
+    requests = await api.get(tenants.b.path("/voice/number-requests"), headers=headers)
+    assert [(r["id"], r["status"]) for r in requests.json()["items"]] == [(b.request_id, "PENDING")]
 
     # docs/15: nobody outside B can approve B's lead for AI calling.
     lead = await api.get(tenants.b.path(f"/leads/{b.lead_id}"), headers=headers)
@@ -345,7 +375,10 @@ async def test_voice_collections_never_contain_another_workspace_s_rows(
 
     payload = response.json()
     items = payload["items"] if isinstance(payload, dict) else payload
-    own = a.call_id if route == "/voice/calls" else a.mapping_id
+    own = {
+        "/voice/calls": a.call_id,
+        "/voice/number-requests": a.request_id,
+    }.get(route, a.mapping_id)
     assert [item["id"] for item in items] == [own]
     _assert_nothing_of_b(response, tenants, b)
 

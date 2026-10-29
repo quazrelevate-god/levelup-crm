@@ -66,6 +66,14 @@ RESERVED_VARIABLES: tuple[VoiceVariable, ...] = (
         True,
     ),
     VoiceVariable(
+        "crm_call_direction",
+        "crm",
+        "Who called whom",
+        '"outbound" when the CRM placed the call, "inbound" when the lead rang one of your '
+        "numbers and the caller lookup found them.",
+        True,
+    ),
+    VoiceVariable(
         "crm_last_call_summary",
         "crm",
         "Last call's summary",

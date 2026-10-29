@@ -41,6 +41,7 @@ const KIND_LABELS: Record<WalletTransactionKind, string> = {
   DISCOUNT: 'Discount',
   ADJUSTMENT: 'Adjustment',
   CALL_CHARGE: 'AI call',
+  NUMBER_RENTAL: 'Calling number',
 }
 
 function minutes(value: number): string {

@@ -180,6 +180,37 @@ class WalletService:
 
     # --- charging -----------------------------------------------------------
 
+    async def charge_number_rental(self, amount: Decimal, *, note: str) -> WalletTransaction:
+        """One period of a calling number's rent (docs/16), paid up front.
+
+        Unlike a call, rent is never allowed to take the balance below zero:
+        402 when the wallet cannot cover it, and nothing is written.
+        """
+        price = _money(amount)
+        wallet = await self.require(for_update=True)
+        if wallet.balance < price:
+            raise api_error(
+                402,
+                "wallet_insufficient_balance",
+                "Your wallet balance is too low for this number. Please recharge your wallet.",
+                balance=str(_money(wallet.balance)),
+                required=str(price),
+                currency=wallet.currency,
+            )
+        wallet.balance = _money(wallet.balance - price)
+        row = WalletTransaction(
+            wallet_id=wallet.id,
+            kind=WalletTransactionKind.NUMBER_RENTAL,
+            amount=-price,
+            currency=wallet.currency,
+            balance_after=wallet.balance,
+            note=note,
+            recorded_by=None,
+        )
+        self._session.add(row)
+        await self._session.flush()
+        return row
+
     async def settle_call(self, call: VoiceCallExecution) -> WalletTransaction | None:
         """Charge a finished call what it still owes. Safe to run repeatedly.
 

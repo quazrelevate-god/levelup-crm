@@ -369,3 +369,5 @@ class WalletTransactionKind(enum.StrEnum):
     #: than one row when Bolna reports its duration late (see
     #: `WalletService.settle_call`); their sum is the call's price.
     CALL_CHARGE = "CALL_CHARGE"
+    #: A calling number's rent for one period (docs/16). Always a debit.
+    NUMBER_RENTAL = "NUMBER_RENTAL"

@@ -140,7 +140,7 @@ M11_TABLES = {"password_reset_tokens"}
 VOICE_TABLES = {"voice_call_contexts", "voice_call_executions", "voice_extraction_mappings"}
 
 # Prepaid AI-call wallets (docs/14): the balance and its append-only ledger.
-BILLING_TABLES = {"wallets", "wallet_transactions"}
+BILLING_TABLES = {"wallets", "wallet_transactions", "voice_number_requests"}
 
 
 def test_the_schema_defines_exactly_the_tables_the_landed_milestones_own() -> None:

@@ -27,10 +27,11 @@ The path for both is the one contract §5 froze:
 
 from __future__ import annotations
 
+import logging
 import uuid
-from typing import Annotated
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Path, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.api_keys import ApiKeyScope, require_api_key, resolve_api_key
@@ -45,11 +46,16 @@ from app.integrations.bolna import (
     HttpxBolnaClient,
     bolna_settings_from,
 )
+from app.models.billing import VoiceNumberRequest
 from app.models.field import LeadField
 from app.permissions import FieldProjectionService, FieldWriteFilter, load_grants
 from app.schemas.common import Page, PageParams, page_params
 from app.schemas.voice import (
     ExtractionRead,
+    NumberRequestCreate,
+    NumberRequestFulfil,
+    NumberRequestRead,
+    NumberRequestsRead,
     VoiceApprovalRead,
     VoiceApprovalWrite,
     VoiceCallDetailRead,
@@ -69,7 +75,9 @@ from app.schemas.voice import (
     VoiceSummaryUpdateResult,
     VoiceVariableRead,
 )
+from app.services.email import Outgoing, build_sender
 from app.services.leads import LeadService
+from app.services.number_requests import NumberRequestService
 from app.services.program_context import ProgramContextService
 from app.services.voice_approval import VoiceApprovalService
 from app.services.voice_calls import VoiceCallService
@@ -80,6 +88,8 @@ from app.services.voice_hours import parse_calling_hours
 from app.services.voice_postcall import CallSummarizer, extractions_from_payload
 from app.services.voice_variables import variable_catalogue
 from app.tenancy.scoping import WorkspaceScope, require_workspace, require_workspace_admin
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["voice"])
 
@@ -341,6 +351,159 @@ async def set_calling_numbers(
     scope.workspace.voice_calling_numbers = numbers
     await scope.session.commit()
     return VoiceCallingNumbersRead(numbers=numbers, editable=True)
+
+
+# --- number requests (docs/16) ----------------------------------------------
+
+
+def _request_read(row: VoiceNumberRequest) -> NumberRequestRead:
+    return NumberRequestRead(
+        id=row.id,
+        status=row.status,
+        region=row.region,
+        note=row.note,
+        monthly_price=f"{row.monthly_price:.2f}",
+        currency=row.currency,
+        phone_number=row.phone_number,
+        paid_until=row.paid_until,
+        created_at=row.created_at,
+        fulfilled_at=row.fulfilled_at,
+        cancelled_at=row.cancelled_at,
+    )
+
+
+@router.get(
+    "/voice/number-requests",
+    response_model=NumberRequestsRead,
+    summary="This workspace's calling-number requests and rentals",
+)
+async def list_number_requests(
+    request: Request,
+    scope: Annotated[WorkspaceScope, Depends(require_workspace_admin)],
+    current_user: Annotated[CurrentUser, Depends(get_current_user)],
+) -> NumberRequestsRead:
+    """Charges any rent that has fallen due first, so the list is current."""
+    service = NumberRequestService(scope.session, workspace=scope.workspace)
+    await service.settle_due()
+    await scope.session.commit()
+    settings = request.app.state.settings
+    return NumberRequestsRead(
+        items=[_request_read(row) for row in await service.list()],
+        monthly_price=f"{settings.voice_number_monthly_price:.2f}",
+        currency=scope.workspace.currency,
+        is_operator=is_platform_operator(settings, current_user),
+    )
+
+
+@router.post(
+    "/voice/number-requests",
+    response_model=NumberRequestRead,
+    status_code=201,
+    summary="Request a calling number; the first 30 days come from the wallet",
+)
+async def create_number_request(
+    payload: NumberRequestCreate,
+    request: Request,
+    scope: Annotated[WorkspaceScope, Depends(require_workspace_admin)],
+) -> NumberRequestRead:
+    """A client can only ask. The operator buys the number and fulfils it.
+
+    402 when the wallet cannot cover the first 30 days; 404
+    `wallet_not_configured` when the workspace has no wallet. Either way,
+    nothing is recorded.
+    """
+    settings = request.app.state.settings
+    service = NumberRequestService(scope.session, workspace=scope.workspace)
+    row = await service.request(
+        price=settings.voice_number_monthly_price,
+        region=payload.region,
+        note=payload.note,
+        requested_by_id=scope.membership_id,
+    )
+    await scope.session.commit()
+    await _tell_operator_about(request, scope.workspace.name, row)
+    return _request_read(row)
+
+
+@router.post(
+    "/voice/number-requests/{request_id}/fulfil",
+    response_model=NumberRequestRead,
+    summary="Fulfil a request with the number bought in Bolna (operator only)",
+)
+async def fulfil_number_request(
+    request_id: uuid.UUID,
+    payload: NumberRequestFulfil,
+    request: Request,
+    scope: Annotated[WorkspaceScope, Depends(require_workspace)],
+    current_user: Annotated[CurrentUser, Depends(get_current_user)],
+) -> NumberRequestRead:
+    service = NumberRequestService(scope.session, workspace=scope.workspace)
+    # Found first, then authorised: another workspace's request id is a 404
+    # like every foreign id, never an "operator only" that confirms nothing.
+    await service.get(request_id)
+    _require_operator(request, current_user)
+    row = await service.fulfil(request_id, payload.phone_number)
+    await scope.session.commit()
+    return _request_read(row)
+
+
+@router.post(
+    "/voice/number-requests/{request_id}/cancel",
+    response_model=NumberRequestRead,
+    summary="Cancel: refund a pending request, or release a rented number (operator only)",
+)
+async def cancel_number_request(
+    request_id: uuid.UUID,
+    request: Request,
+    scope: Annotated[WorkspaceScope, Depends(require_workspace)],
+    current_user: Annotated[CurrentUser, Depends(get_current_user)],
+) -> NumberRequestRead:
+    service = NumberRequestService(scope.session, workspace=scope.workspace)
+    # Found first, then authorised: another workspace's request id is a 404
+    # like every foreign id, never an "operator only" that confirms nothing.
+    await service.get(request_id)
+    _require_operator(request, current_user)
+    row = await service.cancel(request_id)
+    await scope.session.commit()
+    return _request_read(row)
+
+
+def _require_operator(request: Request, user: CurrentUser) -> None:
+    if not is_platform_operator(request.app.state.settings, user):
+        raise api_error(
+            403,
+            "operator_only",
+            "Only the platform operator can do this. Contact your account manager.",
+        )
+
+
+async def _tell_operator_about(
+    request: Request, workspace_name: str, row: VoiceNumberRequest
+) -> None:
+    """Email the operator that a number is waiting to be bought. Best effort:
+    a mail failure never undoes a request the client has already paid for."""
+    settings = request.app.state.settings
+    recipients = tuple(settings.platform_operator_emails)
+    if not recipients:
+        return
+    sender = getattr(request.app.state, "email_sender", None) or build_sender(settings)
+    wish = f" from {row.region}" if row.region else ""
+    try:
+        await sender.send(
+            Outgoing(
+                to=recipients,
+                subject=f"{workspace_name} requested a calling number",
+                body=(
+                    f"{workspace_name} requested a calling number{wish} and paid "
+                    f"{row.currency} {row.monthly_price:.2f} for the first 30 days.\n\n"
+                    + (f"Their note: {row.note}\n\n" if row.note else "")
+                    + "Buy a number in Bolna (Phone numbers), then fulfil the request in the CRM "
+                    "under Settings > Calling numbers."
+                ),
+            )
+        )
+    except Exception:
+        logger.exception("number_request_email.failed", extra={"request": str(row.id)})
 
 
 # --- approval for AI calling (docs/15) -------------------------------------
@@ -708,6 +871,58 @@ async def receive_voice_execution(
         raise api_error(404, "not_found", "Workspace not found")
 
     return await _process_execution(scope, payload, request)
+
+
+@bolna_router.get(
+    "/voice/bolna/lookup",
+    summary="Who is calling: the agent's variables for an inbound caller (docs/16)",
+)
+async def bolna_caller_lookup(
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    contact_number: Annotated[str, Query(min_length=3, max_length=32)],
+) -> dict[str, Any]:
+    """Bolna's caller identification (`ingest_source_config`, Internal API).
+
+    When a lead rings one of the workspace's numbers, Bolna asks here before
+    the agent speaks, and merges the answer into the call's variables. The
+    answer is exactly what an outbound call to that lead would carry — built by
+    the same preview the lead panel uses — marked `crm_call_direction:
+    inbound`, so the agent greets a returning lead by name and with their
+    history instead of as a stranger.
+
+    Authenticated by a CRM API key as a Bearer token, which is how Bolna's
+    lookup sends it. The key's permission template decides which fields reach
+    the agent, as on every machine path. An unknown or unreadable number is not
+    an error: the caller simply gets no personal details.
+    """
+    header = request.headers.get("authorization", "")
+    presented = header[7:].strip() if header.lower().startswith("bearer ") else None
+    scope = await resolve_api_key(request, session, presented)
+    leads = await _api_key_lead_service(scope)
+    context = VoiceContextService(
+        scope.session,
+        workspace=scope.workspace,
+        leads=leads,
+        visible_membership_ids=frozenset(),
+        sees_all=True,
+        actor_id=None,
+    )
+    try:
+        lead = await context.find_lead_by_phone(contact_number)
+    except HTTPException:
+        return {"crm_call_direction": "inbound"}
+    service = VoiceCallService(
+        scope.session,
+        workspace=scope.workspace,
+        leads=leads,
+        context=context,
+        client=bolna_client(request),
+        config=bolna_config(request),
+        actor_id=None,
+    )
+    preview = await service.preview(lead)
+    return {**preview.user_data, "crm_call_direction": "inbound"}
 
 
 async def _process_execution(

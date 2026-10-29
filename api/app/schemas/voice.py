@@ -102,6 +102,47 @@ class VoiceCallingNumbersRead(BaseModel):
     editable: bool
 
 
+class NumberRequestCreate(BaseModel):
+    """A client asking for a calling number (docs/16)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: Where they would like it from, e.g. "Karnataka". A wish, not a promise.
+    region: str | None = Field(default=None, max_length=80)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class NumberRequestFulfil(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: The number the operator bought in Bolna for this request.
+    phone_number: str = Field(min_length=3, max_length=32)
+
+
+class NumberRequestRead(BaseModel):
+    id: uuid.UUID
+    status: str
+    region: str | None
+    note: str | None
+    #: Money as a string, like every wallet amount ("850.00").
+    monthly_price: str
+    currency: str
+    phone_number: str | None
+    paid_until: dt.datetime | None
+    created_at: dt.datetime
+    fulfilled_at: dt.datetime | None
+    cancelled_at: dt.datetime | None
+
+
+class NumberRequestsRead(BaseModel):
+    items: list[NumberRequestRead]
+    #: What a new request costs per 30 days.
+    monthly_price: str
+    currency: str
+    #: Whether the caller may fulfil and cancel — the platform operator.
+    is_operator: bool
+
+
 class VoiceApprovalWrite(BaseModel):
     """Switch a lead's approval for AI calling on or off (docs/15)."""
 

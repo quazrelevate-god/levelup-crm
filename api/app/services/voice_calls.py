@@ -81,6 +81,7 @@ from app.schemas.voice import VoiceExecutionWebhook
 from app.services.actions import ActionWriter
 from app.services.lead_context import LeadContextBuilder
 from app.services.leads import LeadService
+from app.services.number_requests import NumberRequestService
 from app.services.program_context import ProgramContextService
 from app.services.voice_context import VoiceContext, VoiceContextService
 from app.services.voice_extraction import ExtractionOutcome, VoiceExtractionService
@@ -388,6 +389,9 @@ class VoiceCallService:
                 # The continuity block — the whole point of the milestone.
                 "crm_call_count": str(context.call_count),
                 "crm_is_repeat_caller": "yes" if context.call_count else "no",
+                # Who dialled whom (docs/16). The caller lookup overrides this
+                # to "inbound" when a lead rings one of the workspace's numbers.
+                "crm_call_direction": "outbound",
             }
         )
         # Which conversation this is. Omitted entirely on a first call rather
@@ -510,6 +514,9 @@ class VoiceCallService:
             context, idempotency_key=idempotency_key, purpose=purpose
         )
 
+        # Rent that has fallen due is charged before a number is chosen, so a
+        # number the wallet stopped paying for is out of the rotation (docs/16).
+        await NumberRequestService(self._session, workspace=self._workspace).settle_due()
         caller_phone = await self._next_calling_number()
         row = VoiceCallExecution(
             lead_id=lead.id,

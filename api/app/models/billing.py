@@ -32,11 +32,13 @@ on the recharge invoice, outside this ledger, so a recharge of 5,000 credits
 
 from __future__ import annotations
 
+import datetime as dt
 import uuid
 from decimal import Decimal
 
 from sqlalchemy import (
     CheckConstraint,
+    DateTime,
     ForeignKey,
     Index,
     Integer,
@@ -53,7 +55,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models.enums import WalletTransactionKind
 from app.models.mixins import TenantModel
 
-__all__ = ["Wallet", "WalletTransaction"]
+__all__ = ["VoiceNumberRequest", "Wallet", "WalletTransaction"]
 
 wallet_transaction_kind_enum = SAEnum(
     WalletTransactionKind,
@@ -95,7 +97,7 @@ class WalletTransaction(TenantModel):
         # it rather than trusting every writer to remember.
         CheckConstraint(
             "(kind IN ('TOPUP', 'DISCOUNT') AND amount > 0)"
-            " OR (kind = 'CALL_CHARGE' AND amount < 0)"
+            " OR (kind IN ('CALL_CHARGE', 'NUMBER_RENTAL') AND amount < 0)"
             " OR (kind = 'ADJUSTMENT' AND amount <> 0)",
             name="amount_sign_matches_kind",
         ),
@@ -143,3 +145,41 @@ class WalletTransaction(TenantModel):
     #: Who recorded an operator entry. Operators act from the command line,
     #: outside any workspace, so this is a label rather than a membership id.
     recorded_by: Mapped[str | None] = mapped_column(String(200))
+
+
+class VoiceNumberRequest(TenantModel):
+    """One calling number a client asked for and pays rent on (docs/16).
+
+    PENDING — requested, first period charged, waiting for the operator to buy
+    it. ACTIVE — the operator fulfilled it; it is in the workspace's calling
+    numbers and paid until `paid_until`. PAST_DUE — a period fell due and the
+    wallet could not cover it. CANCELLED — refunded if it was never fulfilled,
+    or released if it was.
+    """
+
+    __tablename__ = "voice_number_requests"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('PENDING', 'ACTIVE', 'PAST_DUE', 'CANCELLED')", name="status_known"
+        ),
+        CheckConstraint("monthly_price >= 0", name="price_not_negative"),
+    )
+
+    requested_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("memberships.id", ondelete="SET NULL")
+    )
+    #: Where the client would like the number from, as they said it. A wish,
+    #: not a promise: it depends on what the provider has in stock.
+    region: Mapped[str | None] = mapped_column(String(80))
+    note: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="PENDING", server_default=text("'PENDING'")
+    )
+    #: The price per period when it was requested; later price changes do not
+    #: reach numbers already rented.
+    monthly_price: Mapped[Decimal] = mapped_column(MONEY, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    phone_number: Mapped[str | None] = mapped_column(String(32))
+    paid_until: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    fulfilled_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    cancelled_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
