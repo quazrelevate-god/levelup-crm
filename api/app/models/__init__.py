@@ -19,6 +19,7 @@ from app.models.assignment import (
     ScheduledReport,
 )
 from app.models.billing import VoiceNumberRequest, Wallet, WalletTransaction
+from app.models.call_facts import CallFactSet
 from app.models.dashboard import Dashboard
 from app.models.enums import (
     ActionDirection,
@@ -93,6 +94,7 @@ __all__ = [
     "AvailabilityStatus",
     "Base",
     "CallDisposition",
+    "CallFactSet",
     "Changeset",
     "ChangesetSource",
     "CustomActionType",

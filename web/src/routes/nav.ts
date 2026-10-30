@@ -10,6 +10,7 @@
 
 import {
   Activity,
+  BookOpenText,
   Braces,
   BarChart3,
   CalendarClock,
@@ -132,6 +133,13 @@ export const SETTINGS_GROUPS: readonly NavGroup[] = [
         label: 'Voice extraction',
         icon: SlidersHorizontal,
         description: 'How a Bolna call result maps onto fields, stages and actions.',
+      },
+      {
+        to: '/settings/call-facts',
+        label: 'Call facts',
+        icon: BookOpenText,
+        description:
+          'Details the voice agent tells each lead — batch dates, mentors — chosen by rules.',
       },
       {
         to: '/settings/calling-numbers',

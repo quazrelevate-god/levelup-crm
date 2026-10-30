@@ -75,6 +75,7 @@ from app.schemas.voice import (
     VoiceSummaryUpdateResult,
     VoiceVariableRead,
 )
+from app.services.call_facts import CallFactService
 from app.services.email import Outgoing, build_sender
 from app.services.leads import LeadService
 from app.services.number_requests import NumberRequestService
@@ -667,7 +668,11 @@ async def list_voice_variables(
             always_sent=item.always_sent,
             field_type=item.field_type,
         )
-        for item in variable_catalogue(fields, visible)
+        for item in variable_catalogue(
+            fields,
+            visible,
+            await CallFactService(scope.session, workspace=scope.workspace).catalogue(),
+        )
     ]
 
 

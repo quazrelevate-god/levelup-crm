@@ -162,9 +162,12 @@ RESERVED_VARIABLES: tuple[VoiceVariable, ...] = (
 
 
 def variable_catalogue(
-    fields: Iterable[LeadField], visible_keys: Iterable[str]
+    fields: Iterable[LeadField],
+    visible_keys: Iterable[str],
+    facts: Iterable[tuple[str, str]] = (),
 ) -> list[VoiceVariable]:
-    """The workspace's own fields the caller may see, then the reserved ones."""
+    """The workspace's own fields the caller may see, its call facts, then the
+    reserved ones. `facts` is `(key, label)` from every active fact set."""
     visible = set(visible_keys)
     own = [
         VoiceVariable(
@@ -178,4 +181,15 @@ def variable_catalogue(
         for field in fields
         if field.key in visible
     ]
-    return [*own, *RESERVED_VARIABLES]
+    fact_variables = [
+        VoiceVariable(
+            name=key,
+            kind="fact",
+            label=label,
+            description="A call fact: taken from the first fact set whose rule the lead "
+            "matches. Empty when that set does not have it.",
+            always_sent=True,
+        )
+        for key, label in facts
+    ]
+    return [*own, *fact_variables, *RESERVED_VARIABLES]

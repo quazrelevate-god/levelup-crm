@@ -79,6 +79,7 @@ from app.models.voice import VoiceCallExecution
 from app.models.workspace import Workspace
 from app.schemas.voice import VoiceExecutionWebhook
 from app.services.actions import ActionWriter
+from app.services.call_facts import CallFactService
 from app.services.lead_context import LeadContextBuilder
 from app.services.leads import LeadService
 from app.services.number_requests import NumberRequestService
@@ -433,12 +434,24 @@ class VoiceCallService:
         # not. Built from `rendered`, so the projection and rendering
         # chokepoints are the same ones every other read uses. Omitted entirely
         # when the record has nothing worth saying.
+        # Call facts (docs/17): the workspace's reference details for this lead
+        # — batch dates, mentors — from the first fact set whose rule it meets.
+        # Every key any active set uses is sent, blank when this lead's set does
+        # not have it, for the same reason empty fields are (docs/15).
+        facts_service = CallFactService(self._session, workspace=self._workspace)
+        for key in await facts_service.all_keys():
+            user_data.setdefault(key, "")
+        matched = await facts_service.match(context.lead_id)
+        if matched is not None:
+            user_data.update(matched.values)
+
         lead_context = self._lead_context.build(
             rendered,
             fields,
             stage_name=context.stage_name,
             timezone_name=self._workspace.timezone,
             created_at=context.created_at,
+            facts=matched.lines if matched is not None else (),
         )
         if lead_context:
             user_data["crm_lead_context"] = lead_context

@@ -83,6 +83,7 @@ export function VoiceVariablesPage() {
   const variables = useVoiceVariables(activeWorkspaceId as string)
   const code = variables.error instanceof ApiError ? variables.error.code : null
   const own = variables.data?.filter((row) => row.kind === 'field') ?? []
+  const facts = variables.data?.filter((row) => row.kind === 'fact') ?? []
   const reserved = variables.data?.filter((row) => row.kind === 'crm') ?? []
 
   return (
@@ -115,6 +116,20 @@ export function VoiceVariablesPage() {
               <VariableTable rows={own} />
             </CardContent>
           </Card>
+          {facts.length > 0 ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>Call facts</CardTitle>
+                <CardDescription>
+                  From Settings → Call facts: the first set a lead matches decides the value. Sent
+                  on every call, empty when the lead&apos;s set does not have it.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <VariableTable rows={facts} />
+              </CardContent>
+            </Card>
+          ) : null}
           <Card>
             <CardHeader>
               <CardTitle>From the CRM</CardTitle>

@@ -29,7 +29,7 @@ export interface CallPreview {
 export interface VoiceVariable {
   readonly name: string
   /** `field` for one of the workspace's lead fields, `crm` for a reserved one. */
-  readonly kind: 'field' | 'crm'
+  readonly kind: 'field' | 'fact' | 'crm'
   readonly label: string
   readonly description: string
   readonly always_sent: boolean

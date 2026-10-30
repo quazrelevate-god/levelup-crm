@@ -39,7 +39,7 @@ the very fact the caller is asking about.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 
 from app.fields.rendering import _zone
 from app.models.enums import LeadFieldType
@@ -97,6 +97,7 @@ class LeadContextBuilder:
         stage_name: str | None = None,
         timezone_name: str | None = None,
         created_at: dt.datetime | None = None,
+        facts: Sequence[tuple[str, str]] = (),
     ) -> str:
         """The caller context, or `""` when there is nothing worth saying.
 
@@ -106,6 +107,10 @@ class LeadContextBuilder:
         """
         lines = [
             *self._field_lines(rendered_values, fields),
+            # Call facts (docs/17): the workspace's reference details for this
+            # lead, e.g. "Batch start date: 12 December 2026". After the lead's
+            # own fields, so a long record cannot crowd them out.
+            *(f"{label}: {value}" for label, value in facts if value.strip()),
             *self._record_lines(stage_name, timezone_name, created_at),
         ]
         return self._fit(lines)

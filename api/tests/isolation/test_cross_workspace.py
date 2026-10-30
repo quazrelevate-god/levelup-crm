@@ -954,6 +954,17 @@ async def test_pagination_offset_cannot_walk_into_another_workspace(
 # --- 4. the matrix stays complete -------------------------------------------
 
 
+# Call facts (docs/17). A fact set decides what the voice agent tells a lead,
+# so a leaked id would let one workspace put words in another's calls. The
+# probes live in `test_cross_workspace_call_facts.py`.
+CALL_FACT_ID_ROUTES: list[tuple[str, str]] = [
+    ("PATCH", "/settings/call-facts/{fact_set_id}"),
+    ("DELETE", "/settings/call-facts/{fact_set_id}"),
+]
+CALL_FACT_COLLECTION_ROUTES: list[str] = ["/settings/call-facts"]
+CALL_FACT_COLLECTION_WRITE_ROUTES: list[tuple[str, str]] = [("POST", "/settings/call-facts")]
+
+
 def test_the_matrix_covers_every_workspace_scoped_route(app: FastAPI) -> None:
     """Every tenant-scoped operation appears in one of the route lists above.
 
@@ -967,6 +978,9 @@ def test_the_matrix_covers_every_workspace_scoped_route(app: FastAPI) -> None:
     after an audit.
     """
     declared: set[tuple[str, str]] = set()
+    declared.update(CALL_FACT_ID_ROUTES)
+    declared.update(("GET", route) for route in CALL_FACT_COLLECTION_ROUTES)
+    declared.update(CALL_FACT_COLLECTION_WRITE_ROUTES)
     declared.update(M1_MEMBERSHIP_ROUTES)
     declared.update(("GET", route) for route in M1_COLLECTION_ROUTES)
     declared.update(M1_COLLECTION_WRITE_ROUTES)

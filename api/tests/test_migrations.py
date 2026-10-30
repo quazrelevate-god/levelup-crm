@@ -81,6 +81,8 @@ EXPECTED_REVISIONS = [
     "0020_voice_calling_numbers",
     # Number requests (docs/16): clients rent calling numbers from the wallet.
     "0021_voice_number_requests",
+    # Call facts (docs/17): reference details the agent is told, chosen by rule.
+    "0022_call_facts",
 ]
 
 

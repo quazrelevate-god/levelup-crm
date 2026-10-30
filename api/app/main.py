@@ -26,6 +26,7 @@ from app.observability import (
     configure_sentry,
 )
 from app.routers import auth as auth_router
+from app.routers import call_facts as call_facts_router
 from app.routers import fields as fields_router
 from app.routers import health as health_router
 from app.routers import intake as intake_router
@@ -171,6 +172,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # The AI-call wallet (docs/14): read-only for members. Money moves only
     # through the operator's command line and the call webhook.
     app.include_router(wallet_router.router, prefix=tenant_prefix)
+    app.include_router(call_facts_router.router, prefix=tenant_prefix)
     # The route Bolna itself posts to. Not under the tenant prefix: the
     # workspace comes from the key in the URL, because Bolna's agent config
     # accepts only a bare webhook_url — no headers, no signature.

@@ -28,6 +28,7 @@ import { TemplatesPage } from '@/routes/TemplatesPage'
 import { VoiceExtractionSettingsPage } from '@/routes/VoiceExtractionSettingsPage'
 import { WalletPage } from '@/routes/WalletPage'
 import { CallingNumbersPage } from '@/routes/CallingNumbersPage'
+import { CallFactsPage } from '@/routes/CallFactsPage'
 import { VoiceVariablesPage } from '@/routes/VoiceVariablesPage'
 import { WorkspacePickerPage } from '@/routes/WorkspacePickerPage'
 
@@ -84,6 +85,7 @@ export const router = createBrowserRouter([
           { path: 'voice-extraction', element: <VoiceExtractionSettingsPage /> },
           { path: 'voice-variables', element: <VoiceVariablesPage /> },
           { path: 'calling-numbers', element: <CallingNumbersPage /> },
+          { path: 'call-facts', element: <CallFactsPage /> },
           // Moved to the main sidebar; old links still land on it.
           { path: 'wallet', element: <Navigate to="/wallet" replace /> },
           { path: 'system', element: <SystemStatusPage /> },

@@ -141,6 +141,8 @@ VOICE_TABLES = {"voice_call_contexts", "voice_call_executions", "voice_extractio
 
 # Prepaid AI-call wallets (docs/14): the balance and its append-only ledger.
 BILLING_TABLES = {"wallets", "wallet_transactions", "voice_number_requests"}
+#: docs/17: reference details the voice agent is told, chosen by rule.
+CALL_FACT_TABLES = {"call_fact_sets"}
 
 
 def test_the_schema_defines_exactly_the_tables_the_landed_milestones_own() -> None:
@@ -159,6 +161,7 @@ def test_the_schema_defines_exactly_the_tables_the_landed_milestones_own() -> No
         | M11_TABLES
         | VOICE_TABLES
         | BILLING_TABLES
+        | CALL_FACT_TABLES
     )
 
 
