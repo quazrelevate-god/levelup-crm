@@ -85,6 +85,8 @@ EXPECTED_REVISIONS = [
     "0022_call_facts",
     # Connected apps and workflows (docs/18): Razorpay payments start workflows.
     "0023_automations",
+    # The operator console (docs/19): its action history, and support access.
+    "0024_operator_console",
 ]
 
 

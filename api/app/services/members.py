@@ -222,7 +222,9 @@ class MemberService:
         """`(used, limit)` for this workspace."""
         used = await self._session.execute(
             select(func.count()).select_from(
-                self._session.select(Membership).where(Membership.has_license.is_(True)).subquery()
+                self._session.select(Membership)
+                .where(Membership.has_license.is_(True), Membership.is_support.is_(False))
+                .subquery()
             )
         )
         workspace = await self._workspace()

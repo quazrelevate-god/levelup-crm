@@ -199,6 +199,11 @@ class Membership(TenantModel):
     has_license: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("false")
     )
+    #: The platform operator, let in to help (docs/19). Holds no seat the
+    #: client paid for, and is labelled as support wherever members are listed.
+    is_support: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
     availability: Mapped[AvailabilityStatus] = mapped_column(
         availability_status_enum,
         nullable=False,

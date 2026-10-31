@@ -20,12 +20,16 @@ from app.auth.deps import CurrentUser, get_current_user
 from app.config import Settings
 from app.errors import forbidden
 
-__all__ = ["is_platform_operator", "require_platform_operator"]
+__all__ = ["is_operator_email", "is_platform_operator", "require_platform_operator"]
+
+
+def is_operator_email(settings: Settings, email: str) -> bool:
+    allowed = {address.strip().lower() for address in settings.platform_operator_emails}
+    return email.strip().lower() in allowed
 
 
 def is_platform_operator(settings: Settings, user: CurrentUser) -> bool:
-    allowed = {email.strip().lower() for email in settings.platform_operator_emails}
-    return user.email.strip().lower() in allowed
+    return is_operator_email(settings, user.email)
 
 
 async def require_platform_operator(

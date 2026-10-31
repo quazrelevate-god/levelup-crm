@@ -36,12 +36,34 @@ import { VoiceVariablesPage } from '@/routes/VoiceVariablesPage'
 import { WorkflowEditorPage } from '@/routes/WorkflowEditorPage'
 import { WorkflowsPage } from '@/routes/WorkflowsPage'
 import { WorkspacePickerPage } from '@/routes/WorkspacePickerPage'
+import { OperatorLayout } from '@/features/operator/OperatorLayout'
+import { CompanyPage } from '@/routes/operator/CompanyPage'
+import { NewCompanyPage } from '@/routes/operator/NewCompanyPage'
+import { OperatorHomePage } from '@/routes/operator/OperatorHomePage'
+import {
+  NumberRequestsPage,
+  OperatorHistoryPage,
+  OperatorLoginsPage,
+} from '@/routes/operator/OperatorMiscPages'
 
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
   // Unauthenticated by design — this is where every account begins.
   { path: '/set-password', element: <SetPasswordPage /> },
   { path: '/forgot-password', element: <ForgotPasswordPage /> },
+  {
+    // The operator console (docs/19): above every company, operator only.
+    path: '/operator',
+    element: <OperatorLayout />,
+    children: [
+      { index: true, element: <OperatorHomePage /> },
+      { path: 'companies/new', element: <NewCompanyPage /> },
+      { path: 'companies/:companyId', element: <CompanyPage /> },
+      { path: 'numbers', element: <NumberRequestsPage /> },
+      { path: 'history', element: <OperatorHistoryPage /> },
+      { path: 'logins', element: <OperatorLoginsPage /> },
+    ],
+  },
   {
     // Signed in, but no workspace chosen yet — the picker sits between the two
     // guards, so it must not require an active workspace itself.

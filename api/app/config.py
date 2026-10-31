@@ -172,6 +172,9 @@ class Settings(BaseSettings):
     #: currency, charged from the wallet (docs/16). About $10 against Bolna's $5.
     #: Applies to new requests; a number already rented keeps its price.
     voice_number_monthly_price: Decimal = Decimal("850.00")
+    #: A company whose wallet is below this shows as "low balance" in the
+    #: operator console (docs/19). In the company's own currency.
+    operator_low_balance: Decimal = Decimal("500.00")
 
     #: Base URL of the LevelUp Learning knowledge base, e.g.
     #: https://kb-production.up.railway.app. When set, the voice trigger reads

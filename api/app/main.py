@@ -35,6 +35,7 @@ from app.routers import intake as intake_router
 from app.routers import integrations as integrations_router
 from app.routers import leads as leads_router
 from app.routers import members as members_router
+from app.routers import operator as operator_router
 from app.routers import permission_templates as permission_templates_router
 from app.routers import pipeline as pipeline_router
 from app.routers import reports as reports_router
@@ -181,6 +182,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Where connected apps post. The workspace comes from the token in the URL;
     # the app's own signature proves the sender.
     app.include_router(hooks_router.router, prefix=resolved.api_v1_prefix)
+    # The operator console (docs/19): outside every workspace, operator only.
+    app.include_router(operator_router.router, prefix=resolved.api_v1_prefix)
     # The route Bolna itself posts to. Not under the tenant prefix: the
     # workspace comes from the key in the URL, because Bolna's agent config
     # accepts only a bare webhook_url — no headers, no signature.

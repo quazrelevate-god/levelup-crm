@@ -37,6 +37,8 @@ export interface MembershipSummary {
   readonly has_license: boolean
   readonly availability: AvailabilityStatus
   readonly manager_id: string | null
+  /** The platform operator, inside this company to help (docs/19). */
+  readonly is_support?: boolean
 }
 
 export interface TokenResponse {
@@ -46,6 +48,8 @@ export interface TokenResponse {
   readonly expires_in: number
   readonly user: UserSummary
   readonly memberships: readonly MembershipSummary[]
+  /** Signs the operator straight into the console (docs/19). */
+  readonly is_platform_operator?: boolean
 }
 
 export interface MeResponse {

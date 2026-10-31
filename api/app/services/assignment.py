@@ -287,6 +287,9 @@ class AssignmentEngine:
         # to one is a lead nobody will ever call.
         if not member.has_license:
             return False
+        # The platform operator inside to help (docs/19) is never sent work.
+        if member.is_support:
+            return False
         return not (skip_unavailable and member.availability is not AvailabilityStatus.WORKING)
 
     async def _candidates(self, rule: AssignmentRule) -> list[uuid.UUID]:

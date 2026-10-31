@@ -23,7 +23,7 @@ from app.auth.deps import (
     get_password_hasher,
     get_token_service,
 )
-from app.auth.operator import is_platform_operator
+from app.auth.operator import is_operator_email, is_platform_operator
 from app.auth.passwords import PasswordHasherService
 from app.auth.rate_limit import AuthRateLimiter, RateLimitExceededError
 from app.auth.tokens import TokenService
@@ -72,6 +72,7 @@ def _membership_summaries(memberships: list[Membership]) -> list[MembershipSumma
             has_license=membership.has_license,
             availability=membership.availability.value,
             manager_id=membership.manager_id,
+            is_support=membership.is_support,
         )
         for membership in memberships
     ]
@@ -123,6 +124,7 @@ async def login(
         expires_in=pair.expires_in_seconds,
         user=UserSummary.model_validate(user),
         memberships=_membership_summaries(memberships),
+        is_platform_operator=is_operator_email(request.app.state.settings, user.email),
     )
 
 
@@ -164,6 +166,7 @@ async def refresh(
         expires_in=pair.expires_in_seconds,
         user=UserSummary.model_validate(user),
         memberships=_membership_summaries(memberships),
+        is_platform_operator=is_operator_email(request.app.state.settings, user.email),
     )
 
 

@@ -145,6 +145,8 @@ BILLING_TABLES = {"wallets", "wallet_transactions", "voice_number_requests"}
 CALL_FACT_TABLES = {"call_fact_sets"}
 #: docs/18: connected apps, what they sent, workflows and their runs.
 AUTOMATION_TABLES = {"app_connections", "app_events", "workflows", "workflow_runs"}
+#: docs/19: what the platform operator did, across companies. Global, not tenant.
+OPERATOR_TABLES = {"operator_actions"}
 
 
 def test_the_schema_defines_exactly_the_tables_the_landed_milestones_own() -> None:
@@ -165,6 +167,7 @@ def test_the_schema_defines_exactly_the_tables_the_landed_milestones_own() -> No
         | BILLING_TABLES
         | CALL_FACT_TABLES
         | AUTOMATION_TABLES
+        | OPERATOR_TABLES
     )
 
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, Navigate, Outlet, useLocation } from 'react-router-dom'
-import { Menu, Settings2, X } from 'lucide-react'
+import { Crown, Menu, Settings2, X } from 'lucide-react'
 
 import { MarbiMark, MarbiWordmark } from '@/components/brand/MarbiLogo'
 import { Button } from '@/components/ui/button'
@@ -61,7 +61,8 @@ function NavItem({
 }
 
 export function AppLayout() {
-  const { status, user, activeMembership, activeWorkspaceId, memberships, logout } = useAuth()
+  const { status, user, activeMembership, activeWorkspaceId, memberships, logout, isOperator } =
+    useAuth()
   const location = useLocation()
   const [drawerOpen, setDrawerOpen] = useState(false)
 
@@ -225,6 +226,13 @@ export function AppLayout() {
               {user?.email}
             </span>
             <ThemeToggle />
+            {isOperator ? (
+              <Button variant="outline" size="sm" asChild>
+                <Link to="/operator">
+                  <Crown aria-hidden="true" /> Operator console
+                </Link>
+              </Button>
+            ) : null}
             {memberships.length > 1 ? (
               <Button variant="outline" size="sm" asChild>
                 <Link to="/workspaces">Switch workspace</Link>
@@ -236,6 +244,17 @@ export function AppLayout() {
           </div>
         </header>
 
+        {activeMembership.is_support ? (
+          // The operator inside a client's CRM to help (docs/19). Always said,
+          // so nobody mistakes support access for a member of the company.
+          <div className="mx-4 mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-amber-400 px-4 py-2 text-sm font-medium text-slate-900">
+            <Crown aria-hidden="true" className="size-4" />
+            You are inside {workspaceName} as operator support (Root, no seat used).
+            <Link to="/operator" className="ml-auto underline">
+              Back to the operator console
+            </Link>
+          </div>
+        ) : null}
         {/* The even margin on all four sides. */}
         <main className="min-h-0 flex-1 p-4">
           <div className="bg-card border-border/60 shadow-e3 h-full overflow-y-auto rounded-2xl border px-6 py-6 sm:px-8">

@@ -26,7 +26,7 @@ const MESSAGES: Record<string, string> = {
 }
 
 export function LoginPage() {
-  const { login, status } = useAuth()
+  const { login, status, isOperator } = useAuth()
   const navigate = useNavigate()
 
   const [email, setEmail] = useState('')
@@ -35,7 +35,7 @@ export function LoginPage() {
   const [submitting, setSubmitting] = useState(false)
 
   if (status === 'authenticated') {
-    return <Navigate to="/" replace />
+    return <Navigate to={isOperator ? '/operator' : '/'} replace />
   }
 
   async function handleSubmit(event: React.FormEvent) {
@@ -43,8 +43,9 @@ export function LoginPage() {
     setError(null)
     setSubmitting(true)
     try {
-      await login(email, password)
-      void navigate('/', { replace: true })
+      const { isOperator } = await login(email, password)
+      // The operator lands in the console, not inside one company (docs/19).
+      void navigate(isOperator ? '/operator' : '/', { replace: true })
     } catch (cause) {
       const code = cause instanceof ApiError ? cause.code : 'unknown_error'
       setError(MESSAGES[code] ?? 'Sign in failed. Try again.')

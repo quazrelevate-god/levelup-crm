@@ -44,6 +44,7 @@ export function AuthProvider({ children }: { readonly children: ReactNode }) {
   const [status, setStatus] = useState<AuthState['status']>('loading')
   const [user, setUser] = useState<UserSummary | null>(null)
   const [memberships, setMemberships] = useState<readonly MembershipSummary[]>([])
+  const [isOperator, setIsOperator] = useState(false)
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(() =>
     localStorage.getItem(ACTIVE_WORKSPACE_KEY),
   )
@@ -54,6 +55,7 @@ export function AuthProvider({ children }: { readonly children: ReactNode }) {
     localStorage.removeItem(ACTIVE_WORKSPACE_KEY)
     setUser(null)
     setMemberships([])
+    setIsOperator(false)
     setActiveWorkspaceId(null)
     setStatus('anonymous')
   }, [])
@@ -85,6 +87,7 @@ export function AuthProvider({ children }: { readonly children: ReactNode }) {
         if (cancelled) return
         setUser(me.user)
         setMemberships(me.memberships)
+        setIsOperator(me.is_platform_operator)
         setStatus('authenticated')
       })
       .catch(() => {
@@ -111,6 +114,8 @@ export function AuthProvider({ children }: { readonly children: ReactNode }) {
     persistTokens(pair)
     setUser(response.user)
     setMemberships(response.memberships)
+    const operator = Boolean(response.is_platform_operator)
+    setIsOperator(operator)
     setStatus('authenticated')
 
     // Land in a workspace the user can actually work in. A membership without
@@ -128,6 +133,14 @@ export function AuthProvider({ children }: { readonly children: ReactNode }) {
       localStorage.removeItem(ACTIVE_WORKSPACE_KEY)
       setActiveWorkspaceId(null)
     }
+    return { isOperator: operator }
+  }, [])
+
+  const reload = useCallback(async () => {
+    const me = await api.get<MeResponse>('/me')
+    setUser(me.user)
+    setMemberships(me.memberships)
+    setIsOperator(me.is_platform_operator)
   }, [])
 
   const logout = useCallback(async () => {
@@ -159,8 +172,10 @@ export function AuthProvider({ children }: { readonly children: ReactNode }) {
       memberships,
       activeWorkspaceId,
       activeMembership,
+      isOperator,
       login,
       logout,
+      reload,
       selectWorkspace,
     }),
     [
@@ -169,8 +184,10 @@ export function AuthProvider({ children }: { readonly children: ReactNode }) {
       memberships,
       activeWorkspaceId,
       activeMembership,
+      isOperator,
       login,
       logout,
+      reload,
       selectWorkspace,
     ],
   )

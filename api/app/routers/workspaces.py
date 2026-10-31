@@ -34,6 +34,7 @@ async def _seats_used(session: AsyncSession, workspace_id: uuid.UUID) -> int:
         .where(
             Membership.workspace_id == workspace_id,
             Membership.has_license.is_(True),
+            Membership.is_support.is_(False),
         )
     )
     return int(result.scalar_one())
@@ -186,6 +187,7 @@ async def _seat_usage_from_scope(scope: WorkspaceScope) -> tuple[int, int]:
         .where(
             Membership.workspace_id == scope.workspace_id,
             Membership.has_license.is_(True),
+            Membership.is_support.is_(False),
         )
     )
     return int(result.scalar_one()), scope.workspace.seat_limit

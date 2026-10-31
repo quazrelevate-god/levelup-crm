@@ -66,6 +66,7 @@ from app.models.lead import (
     MessageTemplate,
 )
 from app.models.mixins import Base, TenantModel, TimestampMixin
+from app.models.operator import OperatorAction
 from app.models.permission import TemplateFieldGrant, TemplateLeadView
 from app.models.pipeline import CallDisposition, LostReason, Stage
 from app.models.user import PasswordResetToken, RefreshToken, User
@@ -119,6 +120,7 @@ __all__ = [
     "LostReason",
     "Membership",
     "MessageTemplate",
+    "OperatorAction",
     "OutboxEvent",
     "OutboxStatus",
     "PasswordResetToken",

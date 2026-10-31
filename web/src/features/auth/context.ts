@@ -16,7 +16,12 @@ export interface AuthState {
   readonly memberships: readonly MembershipSummary[]
   readonly activeWorkspaceId: string | null
   readonly activeMembership: MembershipSummary | null
-  login: (email: string, password: string) => Promise<void>
+  /** The platform operator (docs/19): sees the operator console. */
+  readonly isOperator: boolean
+  /** Resolves to whether the person signing in is the operator. */
+  login: (email: string, password: string) => Promise<{ isOperator: boolean }>
+  /** Re-read memberships, e.g. after the operator goes inside a company. */
+  reload: () => Promise<void>
   logout: () => Promise<void>
   selectWorkspace: (workspaceId: string) => void
 }

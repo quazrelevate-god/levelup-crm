@@ -85,6 +85,8 @@ class MembershipSummary(BaseModel):
     has_license: bool
     availability: str
     manager_id: uuid.UUID | None
+    #: The operator, let in to help (docs/19).
+    is_support: bool = False
 
 
 class TokenResponse(BaseModel):
@@ -96,6 +98,8 @@ class TokenResponse(BaseModel):
     expires_in: int
     user: UserSummary
     memberships: list[MembershipSummary]
+    #: Sends the operator straight to the console after signing in (docs/19).
+    is_platform_operator: bool = False
 
 
 class MeResponse(BaseModel):
