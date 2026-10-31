@@ -203,6 +203,10 @@ class Settings(BaseSettings):
     #: A schedule that has not run in this long is caught up once, not once per
     #: missed occurrence — nobody wants 300 backdated reports after an outage.
     scheduler_max_catchup_hours: int = 24
+    #: An outbox event older than this is marked DEAD instead of sent (docs/21):
+    #: after an outage with no worker, a flood of days-old webhooks is worse
+    #: than none. An operator can still redrive any of them by hand.
+    outbox_max_age_hours: int = 48
 
     @field_validator("bolna_webhook_allowed_ips", mode="before")
     @classmethod

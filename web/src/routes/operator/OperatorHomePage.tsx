@@ -46,6 +46,7 @@ export function OperatorHomePage() {
         <div className="space-y-2">
           <h1 className="text-2xl font-semibold tracking-tight">Companies</h1>
           <HierarchyStrip highlight="Company" />
+          {overview.data ? <WorkerLight lastSeen={overview.data.worker_last_seen} /> : null}
         </div>
         <Button size="lg" onClick={() => void navigate('/operator/companies/new')}>
           <Plus aria-hidden="true" /> New company
@@ -242,5 +243,31 @@ export function SeatBar({ used, limit }: { readonly used: number; readonly limit
         {used}/{limit}
       </span>
     </span>
+  )
+}
+
+/**
+ * Whether the background worker is alive (docs/21). It runs everything that
+ * happens on a clock: scheduled reports, webhooks, number rent, and — as they
+ * arrive — timed callbacks and workflow delays.
+ */
+function WorkerLight({ lastSeen }: { readonly lastSeen: string | null }) {
+  const ageSeconds = lastSeen ? (Date.now() - new Date(lastSeen).getTime()) / 1000 : null
+  const running = ageSeconds !== null && ageSeconds < 180
+  return (
+    <p
+      className={cn(
+        'inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium',
+        running
+          ? 'border-emerald-500/40 text-emerald-700 dark:text-emerald-400'
+          : 'border-destructive/40 text-destructive',
+      )}
+      title="Runs everything that happens on a clock: reports, webhooks, number rent, timed callbacks."
+    >
+      <span className={cn('size-2 rounded-full', running ? 'bg-emerald-500' : 'bg-destructive')} />
+      {running
+        ? `Background worker running · checked in ${Math.max(0, Math.round(ageSeconds))}s ago`
+        : 'Background worker not running — timed jobs are paused'}
+    </p>
   )
 }

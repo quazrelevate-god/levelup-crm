@@ -26,6 +26,7 @@ from app.auth.passwords import PasswordHasherService
 from app.events.dispatcher import (
     CLAIM_TIMEOUT,
     DEAD_AFTER_ATTEMPTS,
+    STALE_ERROR,
     DeliveryResult,
     next_attempt_after,
     run_dispatch,
@@ -471,3 +472,35 @@ async def test_dispatch_survives_a_session_that_expires_on_commit(
         assert result["failed"] == 1
     finally:
         await engine.dispose()
+
+
+async def test_an_event_older_than_the_limit_is_retired_not_sent(
+    db_session: AsyncSession, hasher: PasswordHasherService
+) -> None:
+    """After an outage with no worker, days-old webhooks are not flooded out.
+
+    The young event still goes; the old one is DEAD with a reason the operator
+    can read, and can be redriven by hand if it still matters (docs/21).
+    """
+    fixture, endpoint = await _setup(db_session, hasher, name="Backlog")
+    now = dt.datetime.now(dt.UTC)
+    old = await _queue(
+        db_session,
+        fixture,
+        endpoint,
+        occurred_at=now - dt.timedelta(days=5),
+        next_attempt_at=now - dt.timedelta(days=5),
+    )
+    young = await _queue(db_session, fixture, endpoint, next_attempt_at=now)
+
+    transport = RecordingTransport()
+    result = await run_dispatch(
+        db_session, transport=transport, now=now, max_age=dt.timedelta(hours=48)
+    )
+
+    await db_session.refresh(old)
+    await db_session.refresh(young)
+    assert (old.status, old.last_error) == (OutboxStatus.DEAD, STALE_ERROR)
+    assert young.status is OutboxStatus.DELIVERED
+    assert (result["delivered"], result["dead"]) == (1, 1)
+    assert len(transport.calls) == 1

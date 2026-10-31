@@ -39,6 +39,8 @@ export interface Overview {
   readonly low_balance_at: string
   readonly low_balance: readonly Company[]
   readonly pending_number_requests: number
+  /** When the background worker last said it was alive; null if not running. */
+  readonly worker_last_seen: string | null
 }
 
 export interface Feature {
@@ -141,6 +143,8 @@ export function useOverview() {
   return useQuery({
     queryKey: [...keys.all, 'overview'],
     queryFn: () => api.get<Overview>(`${BASE}/overview`),
+    // Keeps the worker light honest without a reload.
+    refetchInterval: 60_000,
   })
 }
 

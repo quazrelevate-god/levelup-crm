@@ -19,7 +19,15 @@ from __future__ import annotations
 import pytest
 from arq.connections import RedisSettings
 
-from app.workers.scheduler import WorkerSettings, dispatch, tick
+from app.workers.scheduler import (
+    HEARTBEAT_KEY,
+    HEARTBEAT_TTL_SECONDS,
+    WorkerSettings,
+    dispatch,
+    heartbeat,
+    settle_numbers,
+    tick,
+)
 
 
 def test_the_arq_entry_point_matches_what_arq_expects() -> None:
@@ -36,14 +44,16 @@ def test_the_arq_entry_point_matches_what_arq_expects() -> None:
     assert settings.port
 
 
-def test_both_cron_jobs_are_registered() -> None:
-    """The scheduler tick and the outbox dispatcher.
+def test_every_cron_job_is_registered() -> None:
+    """The scheduler tick, the outbox dispatcher, the heartbeat and rent.
 
     Losing one is silent: schedules simply stop arriving, or webhooks stop
     being delivered, with nothing in any log to say a job was never registered.
     """
     registered = {job.coroutine for job in WorkerSettings.cron_jobs}
-    assert registered == {tick, dispatch}, {job.name for job in WorkerSettings.cron_jobs}
+    assert registered == {tick, dispatch, heartbeat, settle_numbers}, {
+        job.name for job in WorkerSettings.cron_jobs
+    }
 
 
 @pytest.mark.parametrize("hook", ["on_startup", "on_shutdown"])
@@ -53,3 +63,17 @@ def test_the_lifecycle_hooks_are_callable(hook: str) -> None:
     Without it every job raises `KeyError` on the first `ctx[...]` lookup.
     """
     assert callable(getattr(WorkerSettings, hook))
+
+
+async def test_the_heartbeat_tells_the_console_the_worker_is_alive() -> None:
+    """The console's "Background worker: running" light reads this key."""
+    stored: dict[str, tuple[str, int | None]] = {}
+
+    class FakeRedis:
+        async def set(self, key: str, value: str, ex: int | None = None) -> None:
+            stored[key] = (value, ex)
+
+    moment = await heartbeat({"redis": FakeRedis()})
+
+    assert stored[HEARTBEAT_KEY][0] == moment
+    assert stored[HEARTBEAT_KEY][1] == HEARTBEAT_TTL_SECONDS

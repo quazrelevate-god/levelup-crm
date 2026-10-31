@@ -260,3 +260,6 @@ class OverviewRead(BaseModel):
     low_balance_at: Decimal
     low_balance: list[CompanyRead]
     pending_number_requests: int
+    #: When the background worker last said it was alive; None if it is not
+    #: running (docs/21).
+    worker_last_seen: dt.datetime | None = None

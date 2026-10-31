@@ -4,9 +4,11 @@ The first milestone that needs a *process* rather than a function call. M6's
 index builds are invoked directly by the settings service; this extends that
 module's home rather than standing up a second worker, as the handoff asks.
 
-Two cron entries. The scheduler ticks every minute; the outbox dispatcher runs
-more often than that, because a webhook that arrives a minute after the event is
-a webhook most integrations would call broken. It walks workspaces and asks each one
+Four cron entries (docs/21): the scheduler, the outbox dispatcher, a
+heartbeat the operator console reads, and calling-number rent. The scheduler
+ticks every minute; the outbox dispatcher runs more often than that, because a
+webhook that arrives a minute after the event is a webhook most integrations
+would call broken. It walks workspaces and asks each one
 whether any of its schedules is due **in that workspace's timezone** — the tick
 itself has no timezone, which is the point. A worker that evaluated cron in its
 own zone would be correct for exactly the customers who happen to share it.
@@ -31,10 +33,23 @@ from app.config import get_settings
 from app.events.dispatcher import HttpxTransport, run_dispatch
 from app.models import Workspace
 from app.services.email import build_sender
+from app.services.number_requests import NumberRequestService
 from app.services.scheduling import run_due_schedules
 from app.tenancy.session import ScopedSession
 
-__all__ = ["WorkerSettings", "dispatch", "tick"]
+__all__ = [
+    "HEARTBEAT_KEY",
+    "WorkerSettings",
+    "dispatch",
+    "heartbeat",
+    "settle_numbers",
+    "tick",
+]
+
+#: Where the worker says "I am alive" (docs/21). The operator console reads it.
+HEARTBEAT_KEY = "crm:worker:heartbeat"
+#: A heartbeat older than this means the worker is not running.
+HEARTBEAT_TTL_SECONDS = 300
 
 logger = logging.getLogger(__name__)
 
@@ -90,10 +105,47 @@ async def dispatch(ctx: dict[str, Any]) -> dict[str, int]:
     delay webhook delivery and a dead consumer cannot delay the morning reports.
     """
     session_factory: async_sessionmaker[Any] = ctx["session_factory"]
+    settings = get_settings()
     async with session_factory() as raw:
         return await run_dispatch(
-            raw, transport=ctx["webhook_transport"], now=dt.datetime.now(dt.UTC)
+            raw,
+            transport=ctx["webhook_transport"],
+            now=dt.datetime.now(dt.UTC),
+            max_age=dt.timedelta(hours=settings.outbox_max_age_hours),
         )
+
+
+async def heartbeat(ctx: dict[str, Any]) -> str:
+    """Say the worker is alive, so the console can show it (docs/21)."""
+    moment = dt.datetime.now(dt.UTC).isoformat()
+    redis = ctx.get("redis")
+    if redis is not None:
+        await redis.set(HEARTBEAT_KEY, moment, ex=HEARTBEAT_TTL_SECONDS)
+    return moment
+
+
+async def settle_numbers(ctx: dict[str, Any]) -> int:
+    """Charge calling-number rent that has fallen due, in every workspace.
+
+    `settle_due` also runs whenever a company lists its numbers or places a
+    call; this makes renewals happen on time for a company doing neither.
+    """
+    session_factory: async_sessionmaker[Any] = ctx["session_factory"]
+    async with session_factory() as raw:
+        workspaces = list((await raw.execute(select(Workspace))).scalars().all())
+    settled = 0
+    for workspace in workspaces:
+        async with session_factory() as raw:
+            try:
+                await NumberRequestService(
+                    ScopedSession(raw, workspace.id), workspace=workspace
+                ).settle_due()
+                await raw.commit()
+                settled += 1
+            except Exception:
+                await raw.rollback()
+                logger.exception("numbers.settle_failed", extra={"workspace": str(workspace.id)})
+    return settled
 
 
 async def startup(ctx: dict[str, Any]) -> None:
@@ -122,6 +174,11 @@ class WorkerSettings:
         # returns nothing in the common case, so a quiet workspace pays almost
         # nothing for delivery that feels immediate when it is not quiet.
         cron(dispatch, second={0, 10, 20, 30, 40, 50}, run_at_startup=False),
+        # Every minute, first thing on start, so the console sees a fresh
+        # worker within seconds of a deploy.
+        cron(heartbeat, minute=set(range(60)), run_at_startup=True),
+        # Hourly, at a quiet minute.
+        cron(settle_numbers, minute={17}, run_at_startup=False),
     ]
     on_startup = startup
     on_shutdown = shutdown

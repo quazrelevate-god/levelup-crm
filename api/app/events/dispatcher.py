@@ -52,9 +52,11 @@ __all__ = [
     "CLAIM_TIMEOUT",
     "DEAD_AFTER_ATTEMPTS",
     "MAX_BACKOFF_MINUTES",
+    "STALE_ERROR",
     "DeliveryResult",
     "Transport",
     "deliver_once",
+    "expire_stale",
     "next_attempt_after",
     "run_dispatch",
 ]
@@ -236,12 +238,36 @@ async def _claim(raw: AsyncSession, *, now: dt.datetime, limit: int) -> list[Out
     return list(rows.scalars().all())
 
 
+#: What a too-old event says, so the operator knows why it was never sent.
+STALE_ERROR = (
+    "Too old to deliver: it waited longer than the outbox allows. Redrive it if it still matters."
+)
+
+
+async def expire_stale(raw: AsyncSession, *, now: dt.datetime, max_age: dt.timedelta) -> int:
+    """Mark waiting events older than `max_age` DEAD rather than sending them.
+
+    Only PENDING and FAILED rows: one being delivered right now is left alone.
+    """
+    result = await raw.execute(
+        update(OutboxEvent)
+        .where(
+            OutboxEvent.status.in_((OutboxStatus.PENDING, OutboxStatus.FAILED)),
+            OutboxEvent.occurred_at < now - max_age,
+        )
+        .values(status=OutboxStatus.DEAD, last_error=STALE_ERROR, claimed_at=None)
+    )
+    await raw.commit()
+    return int(getattr(result, "rowcount", 0) or 0)
+
+
 async def run_dispatch(
     raw: AsyncSession,
     *,
     transport: Transport,
     now: dt.datetime,
     limit: int = 50,
+    max_age: dt.timedelta | None = None,
 ) -> dict[str, int]:
     """One dispatch pass: claim, send, record.
 
@@ -250,16 +276,17 @@ async def run_dispatch(
     Each row is *handled* through a `ScopedSession` for its own workspace, so
     projection and every read stay tenant-safe.
     """
+    expired = await expire_stale(raw, now=now, max_age=max_age) if max_age is not None else 0
     claimed = await _claim(raw, now=now, limit=limit)
     if not claimed:
-        return {"claimed": 0, "delivered": 0, "failed": 0, "dead": 0}
+        return {"claimed": 0, "delivered": 0, "failed": 0, "dead": expired}
 
     endpoint_rows = await raw.execute(
         select(WebhookEndpoint).where(WebhookEndpoint.id.in_({row.endpoint_id for row in claimed}))
     )
     endpoints = {endpoint.id: endpoint for endpoint in endpoint_rows.scalars().all()}
 
-    totals = {"claimed": len(claimed), "delivered": 0, "failed": 0, "dead": 0}
+    totals = {"claimed": len(claimed), "delivered": 0, "failed": 0, "dead": expired}
     for row in claimed:
         endpoint = endpoints.get(row.endpoint_id)
         if endpoint is None:  # pragma: no cover - FK cascade makes this unlikely

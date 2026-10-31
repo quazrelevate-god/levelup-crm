@@ -7,6 +7,7 @@ every company and reaches into one at a time.
 
 from __future__ import annotations
 
+import datetime as dt
 import uuid
 from decimal import Decimal
 from typing import Annotated
@@ -47,6 +48,7 @@ from app.schemas.operator import (
 from app.services.lead_ownership import LeadOwnership, get_lead_ownership
 from app.services.operator_console import FEATURE_INFO, CompanyRow, OperatorConsole
 from app.tenancy.features import DEFAULT_ENABLED, FEATURE_FLAGS
+from app.workers.scheduler import HEARTBEAT_KEY
 
 router = APIRouter(prefix="/operator", tags=["operator"])
 
@@ -118,8 +120,25 @@ def _person(m: Membership, user: User, role: PermissionTemplate) -> PersonRead:
 # --- overview and catalogue -------------------------------------------------------
 
 
+async def _worker_last_seen(request: Request) -> dt.datetime | None:
+    redis = getattr(request.app.state, "redis", None)
+    if redis is None:
+        return None
+    try:
+        raw = await redis.get(HEARTBEAT_KEY)
+    except Exception:  # a status light must not break the page
+        return None
+    if raw is None:
+        return None
+    text = raw.decode() if isinstance(raw, bytes) else str(raw)
+    try:
+        return dt.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
 @router.get("/overview", response_model=OverviewRead, summary="Every company at a glance")
-async def overview(console: Console) -> OverviewRead:
+async def overview(console: Console, request: Request) -> OverviewRead:
     rows = await console.companies()
     totals: dict[str, Decimal] = {}
     for row in rows:
@@ -135,6 +154,7 @@ async def overview(console: Console) -> OverviewRead:
         low_balance_at=console.low_balance_at,
         low_balance=[_company(r) for r in rows if r.low_balance and r.workspace.is_active],
         pending_number_requests=len(await console.pending_numbers()),
+        worker_last_seen=await _worker_last_seen(request),
     )
 
 
