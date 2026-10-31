@@ -41,6 +41,13 @@ export interface VoiceCallSummary {
   readonly completed_at: string | null
   /** A test call to a tester's phone, not a call this lead received. */
   readonly is_test: boolean
+  /** Bolna recorded it; it plays through the CRM (docs/20). */
+  readonly has_recording?: boolean
+  /** `user` (the lead) or `agent`, as Bolna reports who hung up. */
+  readonly hangup_by?: string | null
+  /** The carrier's reason the call ended. */
+  readonly hangup_reason?: string | null
+  readonly ring_seconds?: number | null
 }
 
 /** One extracted item, flattened out of Bolna's grouping by the server. */

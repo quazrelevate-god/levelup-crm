@@ -17,6 +17,7 @@
 import { Link, useParams } from 'react-router-dom'
 
 import { Badge } from '@/components/ui/badge'
+import { CallEnding, CallRecording } from '@/features/calls/CallRecording'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useAuth } from '@/features/auth/context'
 import { useVoiceCall, type VoiceCallDetail } from '@/features/calls/api'
@@ -156,6 +157,16 @@ export function CallDetailPage() {
           </Link>
         </div>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Recording</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          <CallRecording workspaceId={workspaceId} call={detail} />
+          <CallEnding call={detail} />
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

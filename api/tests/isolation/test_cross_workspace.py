@@ -519,6 +519,8 @@ VOICE_ID_ROUTES: list[tuple[str, str]] = [
     ("POST", "/voice/number-requests/{request_id}/fulfil"),
     ("POST", "/voice/number-requests/{request_id}/cancel"),
     ("GET", "/voice/calls/{call_id}"),
+    # docs/20: another workspace's call recording.
+    ("GET", "/voice/calls/{call_id}/recording"),
     ("GET", "/voice/extraction-mappings/{mapping_id}"),
     ("PATCH", "/voice/extraction-mappings/{mapping_id}"),
     ("DELETE", "/voice/extraction-mappings/{mapping_id}"),

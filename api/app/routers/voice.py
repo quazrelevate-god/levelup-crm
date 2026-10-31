@@ -32,6 +32,7 @@ import uuid
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.api_keys import ApiKeyScope, require_api_key, resolve_api_key
@@ -87,6 +88,7 @@ from app.services.voice_followup import VoiceFollowupService
 from app.services.voice_history import CallWithLead, VoiceCallHistoryService
 from app.services.voice_hours import parse_calling_hours
 from app.services.voice_postcall import CallSummarizer, extractions_from_payload
+from app.services.voice_recordings import call_ending, open_recording, recording_url
 from app.services.voice_variables import variable_catalogue
 from app.tenancy.scoping import WorkspaceScope, require_workspace, require_workspace_admin
 
@@ -705,6 +707,7 @@ def _lead_ref(entry: CallWithLead) -> VoiceCallLeadRef:
 
 def _call_summary(entry: CallWithLead) -> VoiceCallSummaryRead:
     call = entry.call
+    ending = call_ending(call)
     return VoiceCallSummaryRead(
         id=call.id,
         lead=_lead_ref(entry),
@@ -719,6 +722,10 @@ def _call_summary(entry: CallWithLead) -> VoiceCallSummaryRead:
         dispatched_at=call.dispatched_at,
         completed_at=call.completed_at,
         is_test=call.is_test,
+        has_recording=recording_url(call) is not None,
+        hangup_by=ending.hangup_by,
+        hangup_reason=ending.hangup_reason,
+        ring_seconds=ending.ring_seconds,
     )
 
 
@@ -842,6 +849,42 @@ async def _api_key_lead_service(scope: ApiKeyScope) -> LeadService:
         visible_membership_ids=frozenset(),
         sees_all=True,
     )
+
+
+@router.get(
+    "/voice/calls/{call_id}/recording",
+    response_class=StreamingResponse,
+    summary="Play one call's recording (streamed through the CRM)",
+)
+async def get_voice_call_recording(
+    call_id: uuid.UUID,
+    request: Request,
+    scope: Annotated[WorkspaceScope, Depends(require_workspace)],
+    history: Annotated[VoiceCallHistoryService, Depends(_history_service)],
+) -> StreamingResponse:
+    """The audio, for whoever may see the call — never Bolna's open link.
+
+    Same permission and the same 404 for another workspace's call as the call
+    page itself. Cached privately by the browser only, so replaying is quick
+    and nothing in between keeps a copy.
+    """
+    _require(scope, "view_call_history")
+    entry = await history.get_call(call_id)
+    url = recording_url(entry.call)
+    if url is None:
+        raise api_error(404, "no_recording", "This call has no recording")
+    stream = await open_recording(
+        url,
+        hosts=request.app.state.settings.voice_recording_hosts,
+        transport=getattr(request.app.state, "recording_transport", None),
+    )
+    headers = {
+        "Cache-Control": "private, max-age=3600",
+        "Content-Disposition": f'inline; filename="call-{call_id}.mp3"',
+    }
+    if stream.length:
+        headers["Content-Length"] = stream.length
+    return StreamingResponse(stream.chunks(), media_type=stream.media_type, headers=headers)
 
 
 @executions_router.post(

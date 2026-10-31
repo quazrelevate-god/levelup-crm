@@ -222,6 +222,27 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
  * The server's `Content-Disposition` still decides the filename; `fallback` is
  * only used when the header is absent.
  */
+/**
+ * Fetch a file with the session's token and return it as a blob — for media
+ * the browser cannot request itself, since `<audio src>` sends no bearer token.
+ */
+export async function fetchBlob(path: string): Promise<Blob> {
+  let response = await send(path, { method: 'GET' })
+  if (response.status === 401) {
+    const refreshed = await refreshTokens()
+    if (!refreshed) {
+      setTokens(null)
+      onSessionEnded()
+      throw await parseError(response, path)
+    }
+    response = await send(path, { method: 'GET' })
+  }
+  if (!response.ok) {
+    throw await parseError(response, path)
+  }
+  return response.blob()
+}
+
 export async function downloadFile(path: string, fallback: string): Promise<void> {
   let response = await send(path, { method: 'GET' })
   if (response.status === 401) {

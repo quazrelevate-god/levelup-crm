@@ -60,6 +60,11 @@ _SECRET_KEY_RE = re.compile(
     re.IGNORECASE,
 )
 
+#: Keys that are not credentials but still must not reach a browser: a
+#: recording link opens for anyone who has it, so it is played through the
+#: CRM instead (docs/20).
+_PRIVATE_KEYS = frozenset({"recording_url"})
+
 #: How deep to walk before giving up. A vendor body is a few levels deep; this
 #: exists so a pathological payload cannot spend the request in recursion.
 _MAX_DEPTH = 12
@@ -79,7 +84,7 @@ def redact_payload(value: Any, *, extra_secrets: tuple[str, ...] = (), _depth: i
     if isinstance(value, dict):
         out: dict[str, Any] = {}
         for key, item in value.items():
-            if isinstance(key, str) and _SECRET_KEY_RE.search(key):
+            if isinstance(key, str) and (_SECRET_KEY_RE.search(key) or key in _PRIVATE_KEYS):
                 out[key] = REDACTED
             else:
                 out[key] = redact_payload(item, extra_secrets=extra_secrets, _depth=_depth + 1)

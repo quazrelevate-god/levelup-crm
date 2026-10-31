@@ -175,6 +175,9 @@ class Settings(BaseSettings):
     #: A company whose wallet is below this shows as "low balance" in the
     #: operator console (docs/19). In the company's own currency.
     operator_low_balance: Decimal = Decimal("500.00")
+    #: Hosts a call recording may be fetched from (docs/20). Bolna serves the
+    #: link and redirects to its S3 storage, which is allowed separately.
+    voice_recording_hosts: tuple[str, ...] = ("api.bolna.ai",)
 
     #: Base URL of the LevelUp Learning knowledge base, e.g.
     #: https://kb-production.up.railway.app. When set, the voice trigger reads

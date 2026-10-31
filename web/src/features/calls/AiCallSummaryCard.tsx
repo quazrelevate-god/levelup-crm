@@ -15,6 +15,7 @@ import { Link } from 'react-router-dom'
 
 import { Badge } from '@/components/ui/badge'
 import { useVoiceCalls } from '@/features/calls/api'
+import { CallEnding, CallRecording } from '@/features/calls/CallRecording'
 import { formatCallDuration, formatCallStatus } from '@/features/calls/format'
 
 interface AiCallSummaryCardProps {
@@ -69,6 +70,8 @@ export function AiCallSummaryCard({ workspaceId, leadId }: AiCallSummaryCardProp
         Duration: {formatCallDuration(call.duration_seconds)} · Status:{' '}
         {formatCallStatus(call.bolna_status ?? call.status)}
       </p>
+      <CallEnding call={call} />
+      <CallRecording workspaceId={workspaceId} call={call} compact />
 
       {/* The bridge to the Call Details module, by this call's own CRM id —
           never by lead name or phone number. */}

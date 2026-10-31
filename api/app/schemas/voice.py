@@ -409,6 +409,12 @@ class VoiceCallSummaryRead(BaseModel):
     completed_at: dt.datetime | None = None
     #: A test call to a tester's phone, not a call the lead received.
     is_test: bool = False
+    #: Bolna recorded it; play it through `/voice/calls/{id}/recording`.
+    has_recording: bool = False
+    #: How it ended (docs/20): who hung up, the carrier's reason, ring time.
+    hangup_by: str | None = None
+    hangup_reason: str | None = None
+    ring_seconds: int | None = None
 
 
 class ExtractionRead(BaseModel):
