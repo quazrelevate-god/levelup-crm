@@ -26,9 +26,11 @@ from app.observability import (
     configure_sentry,
 )
 from app.routers import auth as auth_router
+from app.routers import automation as automation_router
 from app.routers import call_facts as call_facts_router
 from app.routers import fields as fields_router
 from app.routers import health as health_router
+from app.routers import hooks as hooks_router
 from app.routers import intake as intake_router
 from app.routers import integrations as integrations_router
 from app.routers import leads as leads_router
@@ -173,6 +175,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # through the operator's command line and the call webhook.
     app.include_router(wallet_router.router, prefix=tenant_prefix)
     app.include_router(call_facts_router.router, prefix=tenant_prefix)
+    # Connected apps and workflows (docs/18).
+    app.include_router(automation_router.router, prefix=tenant_prefix)
+    app.include_router(automation_router.voice_rules_router, prefix=tenant_prefix)
+    # Where connected apps post. The workspace comes from the token in the URL;
+    # the app's own signature proves the sender.
+    app.include_router(hooks_router.router, prefix=resolved.api_v1_prefix)
     # The route Bolna itself posts to. Not under the tenant prefix: the
     # workspace comes from the key in the URL, because Bolna's agent config
     # accepts only a bare webhook_url — no headers, no signature.

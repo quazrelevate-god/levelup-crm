@@ -429,6 +429,24 @@ class LeadService:
         await self._session.flush()
         return lead, writer
 
+    async def apply_update(
+        self,
+        lead: Lead,
+        writer: ActionWriter,
+        *,
+        values: Mapping[str, Any] | None = None,
+        stage_id: uuid.UUID | None = None,
+        lost_reason_id: uuid.UUID | None = None,
+    ) -> None:
+        """One change appended to a changeset the caller already opened.
+
+        For a workflow run, whose several steps are one batch on the timeline
+        and undo as one. The caller owns the changeset and the flush.
+        """
+        await self._apply_update(
+            lead, writer, values=values, stage_id=stage_id, lost_reason_id=lost_reason_id
+        )
+
     async def _apply_update(
         self,
         lead: Lead,

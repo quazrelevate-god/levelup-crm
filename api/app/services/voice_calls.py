@@ -84,6 +84,7 @@ from app.services.lead_context import LeadContextBuilder
 from app.services.leads import LeadService
 from app.services.number_requests import NumberRequestService
 from app.services.program_context import ProgramContextService
+from app.services.system_filters import lead_matches, parse_rule
 from app.services.voice_context import VoiceContext, VoiceContextService
 from app.services.voice_extraction import ExtractionOutcome, VoiceExtractionService
 from app.services.voice_followup import OPENING_KEY, PURPOSE_KEY, opening_line
@@ -106,7 +107,11 @@ from app.services.voice_postcall import (
     normalise_execution,
     summarize_call,
 )
-from app.services.voice_settings import VOICE_OUTCOME_STAGES, read_outcome_stages
+from app.services.voice_settings import (
+    VOICE_OUTCOME_STAGES,
+    read_never_call,
+    read_outcome_stages,
+)
 from app.services.wallet import WalletService
 from app.tenancy.session import ScopedSession
 
@@ -503,6 +508,8 @@ class VoiceCallService:
             )
         # Before anything is written or sent: a refused call leaves no QUEUED
         # row behind and costs Bolna nothing.
+        if test_phone is None:
+            await self._ensure_not_excluded(lead)
         self._ensure_calling_hours()
         await self._wallet().ensure_can_call()
 
@@ -574,6 +581,24 @@ class VoiceCallService:
             user_data=user_data,
             error=result.error,
         )
+
+    async def _ensure_not_excluded(self, lead: Lead) -> None:
+        """Refuse a lead the workspace's never-AI-call rule covers (docs/18).
+
+        Checked here, the one place every call passes — the lead panel, a
+        batch, anything later — so no caller can forget it. A test call rings
+        the tester, not the lead, and is not refused.
+        """
+        rule = parse_rule(read_never_call(self._workspace.settings))
+        if rule is None:
+            return
+        if await lead_matches(self._session, self._workspace, rule, lead.id):
+            raise api_error(
+                409,
+                "lead_excluded_from_ai_calls",
+                "This lead matches your “Never AI-call” rule, so the AI will not call them. "
+                "Change the rule in Settings → AI calling rules if this is wrong.",
+            )
 
     async def _next_calling_number(self) -> str | None:
         """The workspace's next calling number, in turn (docs/16).

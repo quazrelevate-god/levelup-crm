@@ -80,7 +80,7 @@ def _add_context(
 #: accepts only a bare `webhook_url`, so its webhook authenticates with a CRM
 #: API key *in the path* (`routers/voice.py::receive_bolna_webhook`). Anything
 #: that logs a path must pass it through `redact_path` first.
-_SECRET_PATH_RE = re.compile(r"(/voice/bolna/)[^/?#\s]+")
+_SECRET_PATH_RE = re.compile(r"(/voice/bolna/|/hooks/[a-z_]+/)[^/?#\s]+")
 REDACTED = "<redacted>"
 
 

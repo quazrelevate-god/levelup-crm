@@ -93,6 +93,8 @@ export interface FilterBuilderProps {
   readonly members: readonly MemberDetail[]
   readonly customActions: readonly CustomActionType[]
   readonly onChange: (next: GroupNode) => void
+  /** What an empty rule means here. Defaults to the saved-filter meaning. */
+  readonly emptyText?: string
 }
 
 function emptyGroup(): GroupNode {
@@ -573,7 +575,7 @@ function GroupEditor({
 
       {node.children.length === 0 && (
         <p className="text-muted-foreground px-1 text-sm">
-          No rules yet — this matches every lead.
+          {props.emptyText ?? 'No rules yet — this matches every lead.'}
         </p>
       )}
 

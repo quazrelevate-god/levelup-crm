@@ -35,6 +35,7 @@ __all__ = ["FEATURE_FLAGS", "feature_enabled", "require_feature"]
 #: does not silently gain a module because the product shipped one.
 FEATURE_FLAGS: frozenset[str] = frozenset(
     {
+        "automations",
         "location_check_in",
         "campaign",
         "custom_actions",
@@ -47,7 +48,7 @@ FEATURE_FLAGS: frozenset[str] = frozenset(
 
 #: Flags a newly provisioned workspace has on. Kept deliberately small: a
 #: customer opts into a module, rather than opting out of six.
-DEFAULT_ENABLED: frozenset[str] = frozenset({"campaign", "custom_actions"})
+DEFAULT_ENABLED: frozenset[str] = frozenset({"automations", "campaign", "custom_actions"})
 
 
 def feature_enabled(scope: WorkspaceScope, flag: str) -> bool:

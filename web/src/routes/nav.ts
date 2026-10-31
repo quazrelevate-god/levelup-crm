@@ -10,6 +10,7 @@
 
 import {
   Activity,
+  Blocks,
   BookOpenText,
   Braces,
   BarChart3,
@@ -23,6 +24,7 @@ import {
   Phone,
   Plug,
   ListChecks,
+  ShieldBan,
   ShieldCheck,
   SlidersHorizontal,
   Table2,
@@ -31,6 +33,7 @@ import {
   Users,
   Wallet,
   Waypoints,
+  Workflow,
 } from 'lucide-react'
 
 export interface NavLink {
@@ -60,6 +63,12 @@ export const WORKSPACE_NAV: readonly NavLink[] = [
   { to: '/edit-report', label: 'Edit report', icon: History },
   { to: '/members', label: 'Team', icon: Users },
   { to: '/wallet', label: 'Wallet', icon: Wallet },
+]
+
+/** Automation (docs/18): what happens on its own, and the apps that set it off. */
+export const AUTOMATE_NAV: readonly NavLink[] = [
+  { to: '/automations', label: 'Workflows', icon: Workflow },
+  { to: '/apps', label: 'Apps', icon: Blocks },
 ]
 
 /**
@@ -135,6 +144,12 @@ export const SETTINGS_GROUPS: readonly NavGroup[] = [
         description: 'How a Bolna call result maps onto fields, stages and actions.',
       },
       {
+        to: '/settings/ai-calling-rules',
+        label: 'AI calling rules',
+        icon: ShieldBan,
+        description: 'Leads the AI must never call — for example, anyone who has already paid.',
+      },
+      {
         to: '/settings/call-facts',
         label: 'Call facts',
         icon: BookOpenText,
@@ -173,6 +188,7 @@ export function isActive(pathname: string, to: string): boolean {
 export const ALL_NAV_LINKS: readonly NavLink[] = [
   ...PRIMARY_NAV,
   ...WORKSPACE_NAV,
+  ...AUTOMATE_NAV,
   ...SETTINGS_LINKS,
   { to: '/settings', label: 'Settings', icon: SlidersHorizontal },
 ]

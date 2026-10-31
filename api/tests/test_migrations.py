@@ -83,6 +83,8 @@ EXPECTED_REVISIONS = [
     "0021_voice_number_requests",
     # Call facts (docs/17): reference details the agent is told, chosen by rule.
     "0022_call_facts",
+    # Connected apps and workflows (docs/18): Razorpay payments start workflows.
+    "0023_automations",
 ]
 
 

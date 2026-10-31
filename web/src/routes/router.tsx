@@ -1,6 +1,8 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom'
 
+import { AiCallingRulesPage } from '@/routes/AiCallingRulesPage'
 import { AppLayout } from '@/routes/AppLayout'
+import { AppsPage } from '@/routes/AppsPage'
 import { CustomActionsPage } from '@/routes/CustomActionsPage'
 import { DashboardPage } from '@/routes/DashboardPage'
 import { DashboardSettingsPage } from '@/routes/DashboardSettingsPage'
@@ -18,6 +20,7 @@ import { MembersPage } from '@/routes/MembersPage'
 import { AssignmentSettingsPage } from '@/routes/AssignmentSettingsPage'
 import { PermissionsPage } from '@/routes/PermissionsPage'
 import { PipelineSettingsPage } from '@/routes/PipelineSettingsPage'
+import { RazorpayAppPage } from '@/routes/RazorpayAppPage'
 import { RequireAuth } from '@/routes/RequireAuth'
 import { ScheduledReportsPage } from '@/routes/ScheduledReportsPage'
 import { SettingsLayout } from '@/routes/SettingsLayout'
@@ -30,6 +33,8 @@ import { WalletPage } from '@/routes/WalletPage'
 import { CallingNumbersPage } from '@/routes/CallingNumbersPage'
 import { CallFactsPage } from '@/routes/CallFactsPage'
 import { VoiceVariablesPage } from '@/routes/VoiceVariablesPage'
+import { WorkflowEditorPage } from '@/routes/WorkflowEditorPage'
+import { WorkflowsPage } from '@/routes/WorkflowsPage'
 import { WorkspacePickerPage } from '@/routes/WorkspacePickerPage'
 
 export const router = createBrowserRouter([
@@ -63,6 +68,10 @@ export const router = createBrowserRouter([
       { path: 'templates', element: <TemplatesPage /> },
       { path: 'members', element: <MembersPage /> },
       { path: 'wallet', element: <WalletPage /> },
+      { path: 'automations', element: <WorkflowsPage /> },
+      { path: 'automations/:workflowId', element: <WorkflowEditorPage /> },
+      { path: 'apps', element: <AppsPage /> },
+      { path: 'apps/razorpay', element: <RazorpayAppPage /> },
       // The deployment status page moved under Settings with the rest of the
       // operator surface. The old path still works so bookmarks and the
       // existing test suite do not break on a redesign.
@@ -86,6 +95,7 @@ export const router = createBrowserRouter([
           { path: 'voice-variables', element: <VoiceVariablesPage /> },
           { path: 'calling-numbers', element: <CallingNumbersPage /> },
           { path: 'call-facts', element: <CallFactsPage /> },
+          { path: 'ai-calling-rules', element: <AiCallingRulesPage /> },
           // Moved to the main sidebar; old links still land on it.
           { path: 'wallet', element: <Navigate to="/wallet" replace /> },
           { path: 'system', element: <SystemStatusPage /> },

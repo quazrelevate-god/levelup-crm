@@ -83,3 +83,24 @@ def clear_outcome_stages(settings: Any) -> dict[str, Any]:
     existing = dict(settings) if isinstance(settings, dict) else {}
     existing.pop(VOICE_OUTCOME_STAGES, None)
     return existing
+
+
+#: Leads the AI must never ring, as a filter rule the workspace writes —
+#: "fee status is Paid", "stage is Enrolled". A safety net under every call the
+#: CRM places, whoever or whatever asked for it. `{}` or absent: no exclusions.
+VOICE_NEVER_CALL = "voice_never_call"
+
+
+def read_never_call(settings: Any) -> dict[str, Any]:
+    raw = (settings or {}).get(VOICE_NEVER_CALL) if isinstance(settings, dict) else None
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def write_never_call(settings: Any, conditions: dict[str, Any]) -> dict[str, Any]:
+    """The settings dict with this namespace replaced and everything else kept."""
+    existing = dict(settings) if isinstance(settings, dict) else {}
+    if conditions:
+        existing[VOICE_NEVER_CALL] = conditions
+    else:
+        existing.pop(VOICE_NEVER_CALL, None)
+    return existing

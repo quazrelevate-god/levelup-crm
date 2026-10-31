@@ -965,6 +965,33 @@ CALL_FACT_COLLECTION_ROUTES: list[str] = ["/settings/call-facts"]
 CALL_FACT_COLLECTION_WRITE_ROUTES: list[tuple[str, str]] = [("POST", "/settings/call-facts")]
 
 
+# Connected apps and workflows (docs/18). A workflow changes leads with the
+# workspace's own authority and an app's event log holds customers' payments,
+# so a leaked id would let one workspace read or rewire another's money flow.
+# The probes live in `test_cross_workspace_automation.py`.
+WORKFLOW_ID_ROUTES: list[tuple[str, str]] = [
+    ("GET", "/workflows/{workflow_id}"),
+    ("PATCH", "/workflows/{workflow_id}"),
+    ("DELETE", "/workflows/{workflow_id}"),
+    ("POST", "/workflows/{workflow_id}/test"),
+    ("GET", "/workflows/{workflow_id}/runs"),
+]
+AUTOMATION_COLLECTION_ROUTES: list[str] = [
+    "/workflows",
+    "/apps",
+    "/apps/{provider}/events",
+    "/automation/catalogue",
+    "/settings/voice-never-call",
+]
+AUTOMATION_COLLECTION_WRITE_ROUTES: list[tuple[str, str]] = [
+    ("POST", "/workflows"),
+    ("POST", "/apps/{provider}/connect"),
+    ("PATCH", "/apps/{provider}"),
+    ("POST", "/apps/{provider}/rotate-url"),
+    ("PUT", "/settings/voice-never-call"),
+]
+
+
 def test_the_matrix_covers_every_workspace_scoped_route(app: FastAPI) -> None:
     """Every tenant-scoped operation appears in one of the route lists above.
 
@@ -981,6 +1008,9 @@ def test_the_matrix_covers_every_workspace_scoped_route(app: FastAPI) -> None:
     declared.update(CALL_FACT_ID_ROUTES)
     declared.update(("GET", route) for route in CALL_FACT_COLLECTION_ROUTES)
     declared.update(CALL_FACT_COLLECTION_WRITE_ROUTES)
+    declared.update(WORKFLOW_ID_ROUTES)
+    declared.update(("GET", route) for route in AUTOMATION_COLLECTION_ROUTES)
+    declared.update(AUTOMATION_COLLECTION_WRITE_ROUTES)
     declared.update(M1_MEMBERSHIP_ROUTES)
     declared.update(("GET", route) for route in M1_COLLECTION_ROUTES)
     declared.update(M1_COLLECTION_WRITE_ROUTES)

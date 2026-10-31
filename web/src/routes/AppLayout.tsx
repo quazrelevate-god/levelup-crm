@@ -7,7 +7,13 @@ import { Button } from '@/components/ui/button'
 import { useAuth } from '@/features/auth/context'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
 import { WalletBadge } from '@/features/wallet/WalletBadge'
-import { PRIMARY_NAV, WORKSPACE_NAV, isActive, type NavLink as NavLinkSpec } from '@/routes/nav'
+import {
+  AUTOMATE_NAV,
+  PRIMARY_NAV,
+  WORKSPACE_NAV,
+  isActive,
+  type NavLink as NavLinkSpec,
+} from '@/routes/nav'
 import { cn } from '@/lib/utils'
 
 /**
@@ -105,6 +111,20 @@ export function AppLayout() {
       </p>
       <div className="flex flex-col gap-0.5">
         {WORKSPACE_NAV.map((link) => (
+          <NavItem
+            key={link.to}
+            link={link}
+            active={isActive(location.pathname, link.to)}
+            onNavigate={close}
+          />
+        ))}
+      </div>
+
+      <p className="text-muted-foreground/70 truncate px-[22px] pt-5 pb-1.5 text-[0.6875rem] font-semibold tracking-wider uppercase opacity-0 transition-opacity duration-200 group-focus-within/rail:opacity-100 group-hover/rail:opacity-100">
+        Automate
+      </p>
+      <div className="flex flex-col gap-0.5">
+        {AUTOMATE_NAV.map((link) => (
           <NavItem
             key={link.to}
             link={link}

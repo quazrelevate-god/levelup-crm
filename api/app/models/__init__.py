@@ -18,6 +18,7 @@ from app.models.assignment import (
     SalesGroupMember,
     ScheduledReport,
 )
+from app.models.automation import AppConnection, AppEvent, Workflow, WorkflowRun
 from app.models.billing import VoiceNumberRequest, Wallet, WalletTransaction
 from app.models.call_facts import CallFactSet
 from app.models.dashboard import Dashboard
@@ -87,6 +88,8 @@ __all__ = [
     "ActionFieldOption",
     "ActionFieldType",
     "ApiKey",
+    "AppConnection",
+    "AppEvent",
     "AssignmentCursor",
     "AssignmentRule",
     "AssignmentStrategy",
@@ -148,5 +151,7 @@ __all__ = [
     "WalletTransaction",
     "WalletTransactionKind",
     "WebhookEndpoint",
+    "Workflow",
+    "WorkflowRun",
     "Workspace",
 ]
