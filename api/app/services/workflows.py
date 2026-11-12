@@ -30,30 +30,40 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import json
 import re
 import time
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal, InvalidOperation
 from typing import Any
+from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
+import httpx
 from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
+from app.config import get_settings
 from app.errors import api_error, conflict, not_found
-from app.models.automation import Workflow, WorkflowRun
-from app.models.enums import ChangesetSource, StageKind
+from app.integrations.whatsapp import send_template, whatsapp_number
+from app.models.automation import AppConnection, Workflow, WorkflowRun
+from app.models.enums import ChangesetSource, StageKind, VoiceCallPurpose
 from app.models.field import LeadField
 from app.models.lead import Lead
 from app.models.pipeline import LostReason, Stage
 from app.models.workspace import Workspace
 from app.services.actions import ActionWriter
 from app.services.leads import LeadService
+from app.services.scheduled_calls import ScheduledCallService, clamp_to_hours
 from app.services.system_filters import lead_matches, parse_rule, system_lead_service
+from app.services.voice_hours import parse_calling_hours
 from app.tenancy.session import ScopedSession
 
 __all__ = [
+    "CALL_PURPOSES",
+    "LEAD_VARIABLES",
     "NODE_TYPES",
     "OPERATORS",
     "TRIGGERS",
@@ -100,6 +110,16 @@ _PAYMENT_VARIABLES = (
     Variable("description", "Description"),
 )
 
+_BOOKING_VARIABLES = (
+    Variable("event_name", "Meeting type"),
+    Variable("start_time", "Starts at"),
+    Variable("name", "Booked by (name)"),
+    Variable("email", "Booked by (email)"),
+    Variable("phone", "Booked by (phone)"),
+    Variable("reschedule_url", "Reschedule link"),
+    Variable("cancel_url", "Cancel link"),
+)
+
 TRIGGERS: dict[str, TriggerSpec] = {
     spec.key: spec
     for spec in (
@@ -117,8 +137,45 @@ TRIGGERS: dict[str, TriggerSpec] = {
             description="A lead tried to pay through Razorpay and the payment failed.",
             variables=(*_PAYMENT_VARIABLES, Variable("error_reason", "Failure reason")),
         ),
+        TriggerSpec(
+            key="voice.call_finished",
+            label="AI call finished",
+            app="voice",
+            description="An AI call with a lead ended — answered or not. Its summary and "
+            "extracted details are already on the lead when this runs.",
+            variables=(
+                Variable("answered", "Answered (yes / no)"),
+                Variable("duration_seconds", "Talk time (seconds)", "number"),
+                Variable("summary", "Call summary"),
+                Variable("status", "Bolna status"),
+                Variable("hangup_by", "Who hung up (lead / agent)"),
+                Variable("hangup_reason", "Why it ended"),
+            ),
+        ),
+        TriggerSpec(
+            key="calendly.invitee_created",
+            label="Meeting booked",
+            app="calendly",
+            description="A lead booked a slot on your Calendly (for example the interview).",
+            variables=_BOOKING_VARIABLES,
+        ),
+        TriggerSpec(
+            key="calendly.invitee_canceled",
+            label="Booking cancelled",
+            app="calendly",
+            description="A lead cancelled a Calendly booking.",
+            variables=(*_BOOKING_VARIABLES, Variable("cancel_reason", "Why they cancelled")),
+        ),
     )
 }
+
+#: The lead itself, usable in any message as `{{lead.name}}` — the workspace's
+#: own field keys, plus these three the CRM always knows.
+LEAD_VARIABLES = (
+    Variable("lead.name", "Lead's name"),
+    Variable("lead.phone", "Lead's phone"),
+    Variable("lead.email", "Lead's email"),
+)
 
 #: Node type → its exits. A check has two; everything else has one.
 NODE_TYPES: dict[str, tuple[str, ...]] = {
@@ -128,8 +185,20 @@ NODE_TYPES: dict[str, tuple[str, ...]] = {
     "update_fields": ("out",),
     "update_stage": ("out",),
     "add_note": ("out",),
+    "wait": ("out",),
+    "ai_call": ("out",),
+    "send_whatsapp": ("out",),
+    "call_api": ("out",),
 }
-ACTION_TYPES = frozenset({"update_fields", "update_stage", "add_note"})
+ACTION_TYPES = frozenset(
+    {"update_fields", "update_stage", "add_note", "ai_call", "send_whatsapp", "call_api"}
+)
+#: Steps that talk to the outside world. They only ever run in the worker, so
+#: a payment webhook never waits on WhatsApp — the run pauses for a moment
+#: and the worker picks it up within a minute.
+OUTSIDE_TYPES = frozenset({"send_whatsapp", "call_api"})
+WAIT_UNITS = {"minutes": 60, "hours": 3600, "days": 86400}
+MAX_WAIT = dt.timedelta(days=30)
 
 OPERATORS: dict[str, str] = {
     "equals": "equals",
@@ -155,11 +224,13 @@ _TEMPLATE_RE = re.compile(r"\{\{\s*([A-Za-z0-9_.]+)\s*\}\}")
 
 
 def lookup(data: Mapping[str, Any], variable: str) -> Any:
-    """`amount`, or `notes.course` for a key inside the payment's notes."""
-    if variable.startswith("notes."):
-        notes = data.get("notes")
-        return notes.get(variable[6:]) if isinstance(notes, Mapping) else None
-    return data.get(variable)
+    """`amount`, `notes.course`, `lead.name` — a dotted path into the data."""
+    current: Any = data
+    for part in variable.split("."):
+        if not isinstance(current, Mapping):
+            return None
+        current = current.get(part)
+    return current
 
 
 def render(template: str, data: Mapping[str, Any]) -> str:
@@ -326,7 +397,7 @@ def _check_node(
                 out.append(GraphProblem(node_id, "A check is malformed"))
                 continue
             variable, operator = str(rule.get("variable") or ""), rule.get("operator")
-            if variable not in known_variables and not variable.startswith("notes."):
+            if variable not in known_variables and not variable.startswith(("notes.", "lead.")):
                 out.append(GraphProblem(node_id, "Choose what to check"))
             if operator not in OPERATORS:
                 out.append(GraphProblem(node_id, "Choose how to compare"))
@@ -355,10 +426,73 @@ def _check_node(
             out.append(GraphProblem(node_id, "Moving a lead to Lost needs a lost reason"))
     elif kind == "add_note" and not str(data.get("text") or "").strip():
         out.append(GraphProblem(node_id, "Write the note"))
+    elif kind == "wait":
+        try:
+            _delay(data)
+        except ValueError as exc:
+            out.append(GraphProblem(node_id, str(exc)))
+    elif kind == "ai_call":
+        if str(data.get("purpose") or "") not in CALL_PURPOSES:
+            out.append(GraphProblem(node_id, "Choose what kind of call it is"))
+    elif kind == "send_whatsapp":
+        if not str(data.get("template") or "").strip():
+            out.append(GraphProblem(node_id, "Enter the WhatsApp template's name"))
+    elif kind == "call_api":
+        url = str(data.get("url") or "").strip()
+        if not url:
+            out.append(GraphProblem(node_id, "Enter the address to send to"))
+        elif not _safe_url(url.split("{{")[0] or url):
+            out.append(GraphProblem(node_id, "The address must start with https:// and be public"))
+        if str(data.get("method") or "POST").upper() not in HTTP_METHODS:
+            out.append(GraphProblem(node_id, "Choose GET, POST, PUT or PATCH"))
     return out
 
 
 # --- running ----------------------------------------------------------------------
+
+#: What an "AI call" block may ask for: an ordinary call, or one of the voice
+#: agent's own follow-up conversations (`VoiceCallPurpose`).
+CALL_PURPOSES: dict[str, str] = {
+    "": "An ordinary call",
+    VoiceCallPurpose.FOLLOWUP.value: "Follow-up",
+    VoiceCallPurpose.FOLLOWUP_MISSED.value: "They said they'd come back and didn't",
+    VoiceCallPurpose.FOLLOWUP_BOOKING.value: "Paid but has not booked the interview",
+}
+HTTP_METHODS = frozenset({"GET", "POST", "PUT", "PATCH"})
+_HTTP_TIMEOUT = httpx.Timeout(15.0, connect=5.0)
+_PRIVATE_HOSTS = re.compile(
+    r"^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|0\.|\[?::1\]?$|"
+    r".*\.internal$|.*\.local$)"
+)
+
+
+def _safe_url(url: str) -> bool:
+    """HTTPS to a public-looking host. A workflow must not reach the CRM's own
+    network, whoever drew it."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    return parsed.scheme == "https" and bool(host) and not _PRIVATE_HOSTS.match(host)
+
+
+def _delay(config: Mapping[str, Any]) -> dt.timedelta:
+    try:
+        amount = int(config.get("amount") or 0)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Enter how long to wait") from exc
+    unit = str(config.get("unit") or "minutes")
+    if amount <= 0:
+        raise ValueError("Enter how long to wait")
+    if unit not in WAIT_UNITS:
+        raise ValueError("Choose minutes, hours or days")
+    delay = dt.timedelta(seconds=amount * WAIT_UNITS[unit])
+    if delay > MAX_WAIT:
+        raise ValueError("A wait can be at most 30 days")
+    return delay
+
+
+def _delay_words(config: Mapping[str, Any]) -> str:
+    amount, unit = int(config.get("amount") or 0), str(config.get("unit") or "minutes")
+    return f"{amount} {unit[:-1] if amount == 1 else unit}"
 
 
 @dataclasses.dataclass(slots=True)
@@ -367,6 +501,13 @@ class RunResult:
     steps: list[dict[str, Any]]
     duration_ms: int
     error: str | None
+    #: Where the run continues: `[{"nodes": [...], "at": iso, "seen": [...]}]`.
+    pending: list[dict[str, Any]] = dataclasses.field(default_factory=list)
+
+    @property
+    def resume_at(self) -> dt.datetime | None:
+        moments = [dt.datetime.fromisoformat(p["at"]) for p in self.pending]
+        return min(moments) if moments else None
 
 
 def _message(exc: HTTPException) -> str:
@@ -380,12 +521,33 @@ def _message(exc: HTTPException) -> str:
     return str(detail)
 
 
+def _status(steps: Sequence[Mapping[str, Any]], pending: Sequence[Any]) -> str:
+    if pending:
+        return "WAITING"
+    return "FAILED" if any(s.get("result") == "failed" for s in steps) else "SUCCESS"
+
+
+#: How a run is being executed. `live` is a webhook or a call result — no
+#: outside calls, they wait for the worker. `worker` may send. `test` changes
+#: nothing and sends nothing; it says what would happen.
+Mode = str
+
+
 class WorkflowEngine:
     """Runs workflows for one workspace, one lead at a time."""
 
-    def __init__(self, session: ScopedSession, *, workspace: Workspace) -> None:
+    def __init__(
+        self,
+        session: ScopedSession,
+        *,
+        workspace: Workspace,
+        http: httpx.AsyncBaseTransport | None = None,
+        clock: Callable[[], dt.datetime] | None = None,
+    ) -> None:
         self._session = session
         self._workspace = workspace
+        self._http = http
+        self._clock = clock or (lambda: dt.datetime.now(dt.UTC))
         self._leads: LeadService | None = None
         self._stages: dict[uuid.UUID, Stage] | None = None
         self._fields: dict[str, LeadField] | None = None
@@ -409,6 +571,11 @@ class WorkflowEngine:
             self._fields = {f.key: f for f in rows.scalars().all()}
         return self._fields
 
+    def _context(self, lead: Lead, data: Mapping[str, Any]) -> dict[str, Any]:
+        """The trigger's data plus `lead.<field key>` for any message."""
+        values = dict(lead.values or {})
+        return {**data, "lead": {"id": str(lead.id), "identity": lead.identity_value, **values}}
+
     async def run_trigger(
         self,
         trigger: str,
@@ -429,19 +596,27 @@ class WorkflowEngine:
         )
         runs: list[WorkflowRun] = []
         for workflow in rows.scalars().all():
-            result = await self.run(workflow, lead, data)
+            # Written first, so a step that schedules a call can point at it.
             run = WorkflowRun(
                 workflow_id=workflow.id,
                 lead_id=lead.id,
                 trigger=trigger,
                 app_event_id=app_event_id,
-                status=result.status,
-                steps=result.steps,
+                status="RUNNING",
+                steps=[],
                 data=dict(data),
-                duration_ms=result.duration_ms,
-                error=result.error,
             )
             self._session.add(run)
+            await self._session.flush()
+            result = await self._run_graph(
+                workflow.graph, workflow.name, lead, data, mode="live", run_id=run.id
+            )
+            run.status = result.status
+            run.steps = result.steps
+            run.duration_ms = result.duration_ms
+            run.error = result.error
+            run.pending = result.pending
+            run.resume_at = result.resume_at
             runs.append(run)
         await self._session.flush()
         return runs
@@ -449,24 +624,75 @@ class WorkflowEngine:
     async def test(
         self, workflow_graph: Mapping[str, Any], name: str, lead: Lead, data: Mapping[str, Any]
     ) -> RunResult:
-        """What the workflow would do to this lead. Nothing is kept."""
+        """What the workflow would do to this lead. Nothing is kept or sent."""
         savepoint = await self._session.raw.begin_nested()
         try:
-            return await self._run_graph(workflow_graph, name, lead, data)
+            return await self._run_graph(workflow_graph, name, lead, data, mode="test")
         finally:
             await savepoint.rollback()
             # Reload what the rollback expired; async sessions cannot lazy-load.
             await self._session.refresh(lead)
 
     async def run(self, workflow: Workflow, lead: Lead, data: Mapping[str, Any]) -> RunResult:
-        return await self._run_graph(workflow.graph, workflow.name, lead, data)
+        return await self._run_graph(workflow.graph, workflow.name, lead, data, mode="live")
+
+    async def resume(self, run: WorkflowRun) -> WorkflowRun:
+        """Carry a WAITING run on from wherever its waits have run out (worker)."""
+        now = self._clock()
+        workflow = await self._session.get(Workflow, run.workflow_id)
+        lead = await self._session.get(Lead, run.lead_id) if run.lead_id else None
+        if workflow is None or workflow.is_archived or not workflow.is_active:
+            run.status, run.pending, run.resume_at = "CANCELLED", [], None
+            run.error = "The workflow was switched off before it could carry on"
+            await self._session.flush()
+            return run
+        if lead is None or lead.deleted_at is not None:
+            run.status, run.pending, run.resume_at = "CANCELLED", [], None
+            run.error = "The lead no longer exists"
+            await self._session.flush()
+            return run
+
+        due = [p for p in run.pending if dt.datetime.fromisoformat(p["at"]) <= now]
+        later = [p for p in run.pending if dt.datetime.fromisoformat(p["at"]) > now]
+        steps = list(run.steps or [])
+        for entry in due:
+            result = await self._run_graph(
+                workflow.graph,
+                workflow.name,
+                lead,
+                run.data or {},
+                mode="worker",
+                run_id=run.id,
+                start=list(entry.get("nodes") or []),
+                seen=set(entry.get("seen") or []),
+            )
+            steps.extend(result.steps)
+            later.extend(result.pending)
+        run.steps = steps
+        run.pending = later
+        run.resume_at = RunResult("", [], 0, None, later).resume_at
+        run.status = _status(steps, later)
+        run.error = next((s["detail"] for s in steps if s.get("result") == "failed"), None)
+        await self._session.flush()
+        return run
 
     async def _run_graph(
-        self, graph: Mapping[str, Any], name: str, lead: Lead, data: Mapping[str, Any]
+        self,
+        graph: Mapping[str, Any],
+        name: str,
+        lead: Lead,
+        data: Mapping[str, Any],
+        *,
+        mode: Mode,
+        run_id: uuid.UUID | None = None,
+        start: list[str] | None = None,
+        seen: set[str] | None = None,
     ) -> RunResult:
         started = time.monotonic()
+        now = self._clock()
         nodes = {str(n["id"]): n for n in _nodes(graph) if n.get("type") in NODE_TYPES}
         edges = _edges(graph)
+        context = self._context(lead, data)
 
         def targets(node_id: str, handle: str) -> list[str]:
             found = [
@@ -480,21 +706,46 @@ class WorkflowEngine:
             return sorted(found, key=lambda nid: _y(nodes[nid]))
 
         steps: list[dict[str, Any]] = []
-        failed = False
+        pending: list[dict[str, Any]] = []
         writer: ActionWriter | None = None
-        start = next((n for n in nodes.values() if n["type"] == "trigger"), None)
-        queue = targets(str(start["id"]), "out") if start else []
-        seen: set[str] = set()
+        if start is None:
+            trigger = next((n for n in nodes.values() if n["type"] == "trigger"), None)
+            queue = targets(str(trigger["id"]), "out") if trigger else []
+        else:
+            queue = [n for n in start if n in nodes]
+        visited: set[str] = set(seen or ())
 
         while queue and len(steps) < MAX_STEPS:
             node_id = queue.pop(0)
-            if node_id in seen:
+            if node_id in visited:
                 continue
-            seen.add(node_id)
             node = nodes[node_id]
             kind = node["type"]
+            config = _data(node)
+
+            if kind == "wait":
+                visited.add(node_id)
+                words = _delay_words(config)
+                if mode == "test":
+                    steps.append(self._step(node, "done", f"Would wait {words}, then carry on"))
+                    queue.extend(targets(node_id, "out"))
+                    continue
+                at = now + _delay(config)
+                steps.append(
+                    self._step(node, "waiting", f"Waiting {words}, until {self._local(at)}")
+                )
+                pending.append({"nodes": targets(node_id, "out"), "at": at.isoformat()})
+                continue
+
+            if kind in OUTSIDE_TYPES and mode == "live":
+                # Sent by the worker within a minute; nothing outside the CRM
+                # is ever called while a webhook or a call result is waiting.
+                pending.append({"nodes": [node_id], "at": now.isoformat()})
+                continue
+
+            visited.add(node_id)
             if kind in ("condition", "lead_condition"):
-                passed, detail = await self._check(node, lead, data)
+                passed, detail = await self._check(node, lead, context)
                 steps.append(self._step(node, "yes" if passed else "no", detail))
                 queue.extend(targets(node_id, "yes" if passed else "no"))
                 continue
@@ -508,10 +759,11 @@ class WorkflowEngine:
                 )
             try:
                 async with self._session.raw.begin_nested():
-                    detail = await self._act(node, lead, data, writer)
+                    detail = await self._act(
+                        node, lead, context, writer, mode=mode, name=name, run_id=run_id
+                    )
                     await self._session.flush()
             except HTTPException as exc:
-                failed = True
                 steps.append(self._step(node, "failed", _message(exc)))
                 # The savepoint's rollback expired the lead; reload it here,
                 # since an async session cannot lazy-load it later.
@@ -520,13 +772,19 @@ class WorkflowEngine:
             steps.append(self._step(node, "done", detail))
             queue.extend(targets(node_id, "out"))
 
+        for entry in pending:
+            entry["seen"] = sorted(visited)
         error = next((s["detail"] for s in steps if s["result"] == "failed"), None)
         return RunResult(
-            status="FAILED" if failed else "SUCCESS",
+            status=_status(steps, pending),
             steps=steps,
             duration_ms=int((time.monotonic() - started) * 1000),
             error=error,
+            pending=pending,
         )
+
+    def _local(self, moment: dt.datetime) -> str:
+        return moment.astimezone(ZoneInfo(self._workspace.timezone)).strftime("%a %d %b, %I:%M %p")
 
     @staticmethod
     def _step(node: Mapping[str, Any], result: str, detail: str) -> dict[str, Any]:
@@ -536,6 +794,7 @@ class WorkflowEngine:
             "label": str(_data(node).get("title") or _DEFAULT_TITLES.get(node["type"], "")),
             "result": result,
             "detail": detail,
+            "at": dt.datetime.now(dt.UTC).isoformat(),
         }
 
     async def _check(
@@ -575,34 +834,52 @@ class WorkflowEngine:
         lead: Lead,
         data: Mapping[str, Any],
         writer: ActionWriter,
+        *,
+        mode: Mode,
+        name: str,
+        run_id: uuid.UUID | None,
     ) -> str:
         config = _data(node)
         kind = node["type"]
-        leads = await self._lead_service()
         if kind == "add_note":
             body = render(str(config.get("text") or ""), data).strip()
             if not body:
                 raise api_error(422, "empty_note", "The note came out empty")
             writer.record_note(lead, body=body[:4000])
             return f"Added a note: {body[:120]}"
-
         if kind == "update_stage":
-            stages = await self._stage_map()
-            stage_id = _uuid(config.get("stage_id"))
-            stage = stages.get(stage_id) if stage_id else None
-            if stage is None or stage.is_archived:
-                raise api_error(422, "stage_missing", "The chosen stage no longer exists")
-            if lead.stage_id == stage.id:
-                return f"Already in {stage.label}"
-            await leads.apply_update(
-                lead,
-                writer,
-                stage_id=stage.id,
-                lost_reason_id=_uuid(config.get("lost_reason_id")),
+            return await self._move_stage(lead, config, writer)
+        if kind == "ai_call":
+            return await self._schedule_call(
+                lead, config, data, mode=mode, name=name, run_id=run_id
             )
-            return f"Stage → {stage.label}"
+        if kind == "send_whatsapp":
+            return await self._send_whatsapp(lead, config, data, writer, mode=mode)
+        if kind == "call_api":
+            return await self._call_api(config, data, mode=mode)
+        return await self._update_fields(lead, config, data, writer)
 
-        # update_fields
+    async def _move_stage(self, lead: Lead, config: Mapping[str, Any], writer: ActionWriter) -> str:
+        stages = await self._stage_map()
+        stage_id = _uuid(config.get("stage_id"))
+        stage = stages.get(stage_id) if stage_id else None
+        if stage is None or stage.is_archived:
+            raise api_error(422, "stage_missing", "The chosen stage no longer exists")
+        if lead.stage_id == stage.id:
+            return f"Already in {stage.label}"
+        leads = await self._lead_service()
+        await leads.apply_update(
+            lead, writer, stage_id=stage.id, lost_reason_id=_uuid(config.get("lost_reason_id"))
+        )
+        return f"Stage → {stage.label}"
+
+    async def _update_fields(
+        self,
+        lead: Lead,
+        config: Mapping[str, Any],
+        data: Mapping[str, Any],
+        writer: ActionWriter,
+    ) -> str:
         fields = await self._field_map()
         values: dict[str, Any] = {}
         skipped: list[str] = []
@@ -620,7 +897,9 @@ class WorkflowEngine:
                 continue
             values[key] = value.strip()
         if values:
+            leads = await self._lead_service()
             await leads.apply_update(lead, writer, values=values)
+
         def shown(key: str, value: str) -> str:
             option = next((o for o in fields[key].options if o.code == value), None)
             return option.label if option else value
@@ -628,6 +907,160 @@ class WorkflowEngine:
         changed = ", ".join(f"{fields[k].label} → {shown(k, v)}" for k, v in values.items())
         note = f" (left blank: {', '.join(skipped)})" if skipped else ""
         return (changed or "Nothing to update") + note
+
+    async def _schedule_call(
+        self,
+        lead: Lead,
+        config: Mapping[str, Any],
+        data: Mapping[str, Any],
+        *,
+        mode: Mode,
+        name: str,
+        run_id: uuid.UUID | None,
+    ) -> str:
+        """Book an AI call; the worker places it (never in this request)."""
+        purpose = str(config.get("purpose") or "")
+        if purpose not in CALL_PURPOSES:
+            raise api_error(422, "unknown_purpose", "Choose what kind of call it is")
+        why = render(str(config.get("reason") or ""), data).strip()
+        service = ScheduledCallService(
+            self._session,
+            workspace=self._workspace,
+            actor_id=None,
+            hours=parse_calling_hours(get_settings().voice_calling_hours),
+        )
+        due = clamp_to_hours(
+            self._clock(),
+            timezone=self._workspace.timezone,
+            hours=parse_calling_hours(get_settings().voice_calling_hours),
+        )
+        if mode == "test":
+            return (
+                f"Would book an AI call ({CALL_PURPOSES[purpose].lower()}) for {self._local(due)}"
+            )
+        row = await service.schedule(
+            lead,
+            due_at=due,
+            source="WORKFLOW",
+            reason=f"Workflow “{name}”" + (f": {why}" if why else ""),
+            purpose=purpose or None,
+            workflow_run_id=run_id,
+        )
+        return f"AI call booked for {self._local(row.due_at)} ({CALL_PURPOSES[purpose].lower()})"
+
+    async def _send_whatsapp(
+        self,
+        lead: Lead,
+        config: Mapping[str, Any],
+        data: Mapping[str, Any],
+        writer: ActionWriter,
+        *,
+        mode: Mode,
+    ) -> str:
+        template = str(config.get("template") or "").strip()
+        language = str(config.get("language") or "en").strip() or "en"
+        raw_to = render(str(config.get("to") or "{{lead.phone}}"), data)
+        to = whatsapp_number(raw_to, self._workspace.default_country_code)
+        params = [render(str(p), data) for p in (config.get("params") or []) if p is not None]
+        if not to:
+            raise api_error(
+                422, "no_number", f"No WhatsApp number to send to ({raw_to or 'empty'})"
+            )
+        if mode == "test":
+            return f"Would send WhatsApp template “{template}” to +{to}"
+        connection = (
+            await self._session.execute(
+                self._session.select(AppConnection).where(AppConnection.provider == "whatsapp")
+            )
+        ).scalar_one_or_none()
+        if connection is None or not connection.is_active or not connection.credential:
+            raise api_error(422, "whatsapp_not_connected", "Connect WhatsApp in Apps first")
+        phone_id = str((connection.settings or {}).get("phone_number_id") or "").strip()
+        if not phone_id:
+            raise api_error(422, "whatsapp_not_connected", "WhatsApp's phone number ID is not set")
+        result = await send_template(
+            phone_number_id=phone_id,
+            token=connection.credential,
+            to=to,
+            template=template,
+            language=language,
+            params=params,
+            transport=self._http,
+        )
+        if not result.ok:
+            raise api_error(
+                502, "whatsapp_refused", f"WhatsApp said no ({result.status}): {result.error}"
+            )
+        writer.record_note(lead, body=f"💬 WhatsApp sent: template “{template}” to +{to}")
+        return f"WhatsApp template “{template}” sent to +{to}"
+
+    async def _call_api(
+        self, config: Mapping[str, Any], data: Mapping[str, Any], *, mode: Mode
+    ) -> str:
+        method = str(config.get("method") or "POST").upper()
+        url = render(str(config.get("url") or ""), data).strip()
+        if method not in HTTP_METHODS or not _safe_url(url):
+            raise api_error(422, "unsafe_url", "The address must be https:// and public")
+        headers = {
+            str(h.get("key")).strip(): render(str(h.get("value") or ""), data)
+            for h in (config.get("headers") or [])
+            if isinstance(h, dict) and str(h.get("key") or "").strip()
+        }
+        raw_body = render(str(config.get("body") or ""), data).strip()
+        host = urlparse(url).hostname
+        if mode == "test":
+            return f"Would {method} to {host}"
+        json_body: Any = None
+        content: str | None = None
+        if raw_body:
+            try:
+                json_body = json.loads(raw_body)
+            except ValueError:
+                content = raw_body
+        response = await self._request(
+            method, url, headers=headers, json_body=json_body, content=content
+        )
+        if response.status_code >= 300:
+            raise api_error(
+                502,
+                "api_refused",
+                f"{host} answered {response.status_code}: {_error_text(response)}",
+            )
+        return f"{method} to {host} → {response.status_code}"
+
+    async def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        headers: Mapping[str, str],
+        json_body: Any = None,
+        content: str | None = None,
+    ) -> httpx.Response:
+        try:
+            async with httpx.AsyncClient(
+                timeout=_HTTP_TIMEOUT, transport=self._http, follow_redirects=False
+            ) as client:
+                return await client.request(
+                    method, url, headers=dict(headers), json=json_body, content=content
+                )
+        except httpx.HTTPError as exc:
+            raise api_error(
+                502, "unreachable", f"Could not reach {urlparse(url).hostname}"
+            ) from exc
+
+
+def _error_text(response: httpx.Response) -> str:
+    try:
+        body = response.json()
+    except ValueError:
+        return response.text[:200]
+    if isinstance(body, dict):
+        error = body.get("error")
+        if isinstance(error, dict):
+            return str(error.get("message") or error)[:200]
+        return str(body.get("message") or body)[:200]
+    return str(body)[:200]
 
 
 def _y(node: Mapping[str, Any]) -> float:
@@ -642,11 +1075,15 @@ def _y(node: Mapping[str, Any]) -> float:
 
 _DEFAULT_TITLES = {
     "trigger": "Trigger",
-    "condition": "If the payment…",
+    "condition": "If…",
     "lead_condition": "If the lead…",
     "update_fields": "Update lead fields",
     "update_stage": "Change stage",
     "add_note": "Add a note",
+    "wait": "Wait",
+    "ai_call": "AI call",
+    "send_whatsapp": "Send WhatsApp",
+    "call_api": "Call an API",
 }
 
 

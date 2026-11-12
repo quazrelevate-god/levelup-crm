@@ -213,6 +213,20 @@ class LeadService:
         """This caller's lead-visibility predicate. See `lead_visibility_clause`."""
         return lead_visibility_clause(sees_all=self._sees_all, visible=self._visible)
 
+    async def visible_leads(self, lead_ids: Sequence[uuid.UUID]) -> list[Lead]:
+        """The leads among these ids this caller can see, in the order given.
+
+        Deleted, another workspace's, or outside this caller's visibility are
+        simply absent — the caller compares counts to say how many.
+        """
+        statement = self._session.select(Lead).where(
+            Lead.id.in_(list(lead_ids)), Lead.deleted_at.is_(None)
+        )
+        if (clause := self._visibility_clause()) is not None:
+            statement = statement.where(clause)
+        found = {lead.id: lead for lead in (await self._session.execute(statement)).scalars()}
+        return [found[i] for i in dict.fromkeys(lead_ids) if i in found]
+
     async def get_lead(self, lead_id: uuid.UUID) -> Lead:
         statement = (
             self._session.select(Lead)

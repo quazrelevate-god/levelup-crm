@@ -9,15 +9,22 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ShieldBan } from 'lucide-react'
+import { CalendarClock, ShieldBan } from 'lucide-react'
 
 import { api, ApiError } from '@/api/client'
 import type { GroupNode, MemberDetail, Page } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { PageHeader } from '@/components/ui/page-header'
+import { Select } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { useAuth } from '@/features/auth/context'
-import { useNeverCallRule, useSetNeverCallRule } from '@/features/automation/api'
+import {
+  useAutoCallback,
+  useNeverCallRule,
+  useSetAutoCallback,
+  useSetNeverCallRule,
+} from '@/features/automation/api'
 import { allStages } from '@/features/automation/helpers'
 import { useFieldTypes, useLeadFields } from '@/features/fields/api'
 import { FilterBuilder } from '@/features/filters/FilterBuilder'
@@ -55,7 +62,7 @@ export function AiCallingRulesPage() {
     <div className="space-y-5">
       <PageHeader
         title="AI calling rules"
-        description="Leads the AI agent must never call, whoever presses the button or runs a batch."
+        description="Who the AI agent must never call, and when it calls back by itself."
       />
       <Card>
         <CardHeader>
@@ -102,6 +109,77 @@ export function AiCallingRulesPage() {
           </Button>
         </CardContent>
       </Card>
+      <AutoCallbackCard workspaceId={workspaceId} />
     </div>
+  )
+}
+
+/**
+ * Book the call a lead asks for (docs/22). Off until someone switches it on —
+ * nothing dials a lead on its own until the company decides it may.
+ */
+function AutoCallbackCard({ workspaceId }: { readonly workspaceId: string }) {
+  const setting = useAutoCallback(workspaceId)
+  const save = useSetAutoCallback(workspaceId)
+  const fields = useLeadFields(workspaceId)
+  const [fieldKey, setFieldKey] = useState<string | null>(null)
+  const current = setting.data
+  const chosen = fieldKey ?? current?.field_key ?? ''
+  const textFields = (fields.data ?? []).filter((f) => ['TEXT', 'DATE'].includes(f.field_type))
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <CalendarClock aria-hidden="true" className="size-4" /> Call back when the lead asks
+        </CardTitle>
+        <CardDescription>
+          When a lead says “call me tomorrow at 5:30” on an AI call, book that call automatically.
+          Times outside calling hours move to the next allowed time; anything unclear (“sometime
+          next week”) becomes a task for a person instead.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <label className="block space-y-1.5">
+          <span className="text-sm font-medium">
+            The field the AI writes the asked-for time into
+          </span>
+          <Select value={chosen} onChange={(event) => setFieldKey(event.target.value || null)}>
+            <option value="">Choose…</option>
+            {textFields.map((f) => (
+              <option key={f.key} value={f.key}>
+                {f.label}
+              </option>
+            ))}
+          </Select>
+        </label>
+        <label className="flex items-center gap-3">
+          <Switch
+            aria-label="Book callbacks automatically"
+            checked={Boolean(current?.enabled)}
+            disabled={save.isPending || !chosen}
+            onCheckedChange={(on) => save.mutate({ enabled: on, field_key: chosen || null })}
+          />
+          <span className="text-sm">
+            {current?.enabled ? 'On — callbacks are booked automatically' : 'Off'}
+          </span>
+        </label>
+        {fieldKey !== null && current?.enabled && fieldKey !== current.field_key ? (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={save.isPending}
+            onClick={() => save.mutate({ enabled: true, field_key: fieldKey })}
+          >
+            Save field
+          </Button>
+        ) : null}
+        {save.error ? (
+          <p role="alert" className="text-destructive text-sm">
+            {save.error instanceof ApiError ? save.error.message : 'It could not be saved.'}
+          </p>
+        ) : null}
+      </CardContent>
+    </Card>
   )
 }

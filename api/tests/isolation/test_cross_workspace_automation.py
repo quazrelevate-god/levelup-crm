@@ -105,7 +105,8 @@ async def test_automation_lists_show_only_their_own_workspace(
     assert response.status_code == 200, response.text
     assert B_NAME not in response.text
     b_apps = await api.get(tenants.b.path("/apps"), headers=tenants.b.owner.auth)
-    assert b_apps.json()[0]["webhook_path"] not in response.text
+    b_razorpay = next(a for a in b_apps.json() if a["provider"] == "razorpay")
+    assert b_razorpay["webhook_path"] not in response.text
 
 
 @pytest.mark.parametrize(("method", "route"), AUTOMATION_COLLECTION_WRITE_ROUTES)
@@ -117,6 +118,10 @@ async def test_a_non_member_cannot_write_another_workspace_s_automations(
         body = {"secret": "smuggled"}
     elif route == "/settings/voice-never-call":
         body = {"conditions": {}}
+    elif route == "/apps/calendly/setup":
+        body = {"token": "a-token-from-somebody-else"}
+    elif route == "/apps/whatsapp/test":
+        body = {"to": "+919000000000"}
     elif route.startswith("/apps"):
         body = {}
 
@@ -130,8 +135,8 @@ async def test_a_non_member_cannot_write_another_workspace_s_automations(
     assert response.status_code == 404, response.text
     listed = await api.get(tenants.b.path("/workflows"), headers=tenants.b.owner.auth)
     assert listed.json() == []
-    [app] = (await api.get(tenants.b.path("/apps"), headers=tenants.b.owner.auth)).json()
-    assert app["connected"] is False
+    apps = (await api.get(tenants.b.path("/apps"), headers=tenants.b.owner.auth)).json()
+    assert all(app["connected"] is False for app in apps)
 
 
 async def test_b_s_razorpay_url_never_touches_a_s_leads(

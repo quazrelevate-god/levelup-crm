@@ -226,3 +226,63 @@ class VoiceCallExecution(TenantModel):
             postgresql_where=text("status IN ('QUEUED', 'FAILED')"),
         ),
     )
+
+
+class VoiceScheduledCall(TenantModel):
+    """An AI call to place later (docs/22).
+
+    Four ways one is made: the lead asked for a callback on a call ("tomorrow
+    at 5:30"), a workflow said to call, a person scheduled it, or a person
+    picked leads for a bulk AI call (docs/23). The worker places it when due,
+    through exactly the path the AI Call button uses — calling hours, wallet,
+    the never-call rule — with at most `voice_max_parallel_calls` going per
+    company.
+
+    At most one is waiting per lead: a newer schedule replaces the older one,
+    because a lead who said "Monday" and then "Tuesday" meant Tuesday.
+    """
+
+    __tablename__ = "voice_scheduled_calls"
+
+    lead_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("leads.id", ondelete="CASCADE"), nullable=False
+    )
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    #: PENDING, PLACING, PLACED, CANCELLED, SKIPPED, FAILED.
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="PENDING")
+    #: CALLBACK (the lead asked), WORKFLOW, or MANUAL.
+    source: Mapped[str] = mapped_column(String(20), nullable=False)
+    #: A `VoiceCallPurpose` value, or None for an ordinary call.
+    purpose: Mapped[str | None] = mapped_column(String(40))
+    #: Why, in words: the lead's own "tomorrow 5:30 pm", or the workflow's name.
+    reason: Mapped[str | None] = mapped_column(Text())
+    workflow_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workflow_runs.id", ondelete="SET NULL")
+    )
+    created_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("memberships.id", ondelete="SET NULL")
+    )
+    #: The call it became.
+    call_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("voice_call_executions.id", ondelete="SET NULL")
+    )
+    attempts: Mapped[int] = mapped_column(
+        Integer(), nullable=False, default=0, server_default=text("0")
+    )
+    last_error: Mapped[str | None] = mapped_column(Text())
+    placed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index(
+            "ix_voice_scheduled_due",
+            "due_at",
+            postgresql_where=text("status = 'PENDING'"),
+        ),
+        Index(
+            "voice_scheduled_one_pending_uq",
+            "workspace_id",
+            "lead_id",
+            unique=True,
+            postgresql_where=text("status = 'PENDING'"),
+        ),
+    )

@@ -38,6 +38,7 @@ import { Select } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { AiCallSummaryCard } from '@/features/calls/AiCallSummaryCard'
+import { ScheduledCallCard } from '@/features/calls/ScheduledCallCard'
 import type { VoiceCallSummary } from '@/features/calls/api'
 import { useVoiceCalls } from '@/features/calls/api'
 import { useActionFieldTypes } from '@/features/fields/api'
@@ -626,6 +627,7 @@ export function LeadDetail({
         {/* The most recent completed AI call for *this* lead. Summary only —
             transcript and provider payload live on the call's own page. */}
         <AiCallSummaryCard workspaceId={workspaceId} leadId={lead.id} />
+        <ScheduledCallCard workspaceId={workspaceId} leadId={lead.id} />
 
         <div className="space-y-2">
           <Textarea

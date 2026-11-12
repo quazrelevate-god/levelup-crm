@@ -87,6 +87,8 @@ EXPECTED_REVISIONS = [
     "0023_automations",
     # The operator console (docs/19): its action history, and support access.
     "0024_operator_console",
+    # Scheduled AI calls, workflow waits, app tokens (docs/22).
+    "0025_scheduled_calls_and_waits",
 ]
 
 

@@ -24,7 +24,7 @@ from app.dependencies import get_session
 from app.errors import api_error
 from app.models.automation import AppConnection
 from app.models.workspace import Workspace
-from app.services.apps import RazorpayReceiver
+from app.services.apps import CalendlyReceiver, RazorpayReceiver
 from app.tenancy.session import ScopedSession
 
 router = APIRouter(tags=["hooks"])
@@ -35,6 +35,50 @@ MAX_BODY_BYTES = 256_000
 
 class HookResult(BaseModel):
     outcome: str
+
+
+async def _connection(
+    session: AsyncSession, provider: str, token: str
+) -> tuple[AppConnection, Workspace]:
+    connection = (
+        await session.execute(
+            select(AppConnection).where(
+                AppConnection.hook_token == token, AppConnection.provider == provider
+            )
+        )
+    ).scalar_one_or_none()
+    if connection is None or not connection.is_active:
+        raise api_error(404, "not_found", "Not found")
+    workspace = await session.get(Workspace, connection.workspace_id)
+    if workspace is None or not workspace.is_active:
+        raise api_error(404, "not_found", "Not found")
+    if not (workspace.features or {}).get("automations"):
+        raise api_error(404, "not_found", "Not found")
+    return connection, workspace
+
+
+@router.post(
+    "/hooks/calendly/{token}",
+    response_model=HookResult,
+    summary="Calendly webhook (signed; set up from the Calendly app screen)",
+)
+async def calendly_hook(
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    token: Annotated[str, Path(min_length=20, max_length=64)],
+) -> HookResult:
+    connection, workspace = await _connection(session, "calendly", token)
+    body = await request.body()
+    if len(body) > MAX_BODY_BYTES:
+        raise api_error(413, "too_large", "That body is too large")
+    receipt = await CalendlyReceiver(
+        ScopedSession(session, workspace.id), workspace=workspace, connection=connection
+    ).receive(body, request.headers.get("calendly-webhook-signature"))
+    outcome = receipt.event.outcome
+    await session.commit()
+    if not receipt.accepted:
+        raise api_error(401, "invalid_signature", "The signature did not verify")
+    return HookResult(outcome=outcome)
 
 
 @router.post(

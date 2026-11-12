@@ -20,12 +20,20 @@ import { FilterBuilder } from '@/features/filters/FilterBuilder'
 import { useCustomActions, useLostReasons, useStages } from '@/features/pipeline/api'
 
 import type { ConditionRule, NodeData, NodeType, OperatorSpec, TriggerSpec } from './api'
-import { BLOCKS } from './blockSpecs'
+import { APP_LABELS, BLOCKS } from './blockSpecs'
 import { allStages } from './helpers'
 
 const EMPTY_GROUP: GroupNode = { type: 'group', op: 'AND', children: [] }
 
 /** `{{amount}}` chips: click to drop a payment detail into the text. */
+/** The lead's own details, usable in any message. Matches the server's list. */
+const LEAD_CHIPS = [
+  { key: 'lead.name', label: "Lead's name" },
+  { key: 'lead.phone', label: "Lead's phone" },
+  { key: 'lead.email', label: "Lead's email" },
+]
+
+/** `{{amount}}` chips: click to drop a detail into the text. */
 function VariableChips({
   trigger,
   onPick,
@@ -33,17 +41,17 @@ function VariableChips({
   readonly trigger: TriggerSpec | undefined
   readonly onPick: (token: string) => void
 }) {
-  if (!trigger) return null
+  const chips = [...(trigger?.variables ?? []), ...LEAD_CHIPS]
   return (
     <div className="flex flex-wrap gap-1 pt-1">
       <span className="text-muted-foreground text-[11px]">Insert:</span>
-      {trigger.variables.map((v) => (
+      {chips.map((v) => (
         <button
           key={v.key}
           type="button"
           onClick={() => onPick(`{{${v.key}}}`)}
           className="bg-muted hover:bg-primary/10 rounded-md px-1.5 py-0.5 text-[11px]"
-          title={`Puts the payment's ${v.label.toLowerCase()} here`}
+          title={`Puts the ${v.label.toLowerCase()} here`}
         >
           {v.label}
         </button>
@@ -60,6 +68,7 @@ export function Inspector({
   trigger,
   triggers,
   operators,
+  purposes,
   onChange,
   onDelete,
 }: {
@@ -70,6 +79,7 @@ export function Inspector({
   readonly trigger: TriggerSpec | undefined
   readonly triggers: readonly TriggerSpec[]
   readonly operators: readonly OperatorSpec[]
+  readonly purposes: readonly { readonly key: string; readonly label: string }[]
   readonly onChange: (next: NodeData) => void
   readonly onDelete: () => void
 }) {
@@ -107,7 +117,7 @@ export function Inspector({
             <option value="">Choose…</option>
             {triggers.map((t) => (
               <option key={t.key} value={t.key}>
-                {t.app === 'razorpay' ? 'Razorpay — ' : ''}
+                {t.app ? `${APP_LABELS[t.app] ?? t.app} — ` : ''}
                 {t.label}
               </option>
             ))}
@@ -143,6 +153,243 @@ export function Inspector({
             trigger={trigger}
             onPick={(token) => set({ text: `${data.text ?? ''}${token}` })}
           />
+        </div>
+      ) : null}
+
+      {type === 'wait' ? (
+        <div className="space-y-1.5">
+          <Label>Wait for</Label>
+          <div className="flex gap-2">
+            <Input
+              aria-label="How long"
+              type="number"
+              min={1}
+              className="w-24"
+              value={data.amount ?? 10}
+              onChange={(event) => set({ amount: Number(event.target.value) || 0 })}
+            />
+            <Select
+              aria-label="Unit"
+              value={data.unit ?? 'minutes'}
+              onChange={(event) => set({ unit: event.target.value as NodeData['unit'] })}
+            >
+              <option value="minutes">minutes</option>
+              <option value="hours">hours</option>
+              <option value="days">days</option>
+            </Select>
+          </div>
+          <p className="text-muted-foreground text-xs">
+            Then the next step runs. Put an “If the lead…” check after it to act only if nothing has
+            changed — e.g. they still have not booked.
+          </p>
+        </div>
+      ) : null}
+
+      {type === 'ai_call' ? (
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="block-purpose">What kind of call</Label>
+            <Select
+              id="block-purpose"
+              value={data.purpose ?? ''}
+              onChange={(event) => set({ purpose: event.target.value })}
+            >
+              {purposes.map((p) => (
+                <option key={p.key} value={p.key}>
+                  {p.label}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="block-reason">Why (shown on the lead’s timeline)</Label>
+            <Input
+              id="block-reason"
+              maxLength={300}
+              placeholder="e.g. paid {{amount}}, not booked yet"
+              value={data.reason ?? ''}
+              onChange={(event) => set({ reason: event.target.value })}
+            />
+            <VariableChips
+              trigger={trigger}
+              onPick={(token) => set({ reason: `${data.reason ?? ''}${token}` })}
+            />
+          </div>
+          <p className="text-muted-foreground text-xs">
+            The call is placed within calling hours, one at a time, and never to a lead your “Never
+            AI-call” rule covers.
+          </p>
+        </div>
+      ) : null}
+
+      {type === 'send_whatsapp' ? (
+        <div className="space-y-3">
+          <div className="grid grid-cols-[1fr_6rem] gap-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="block-template">Template name</Label>
+              <Input
+                id="block-template"
+                placeholder="e.g. fee_received"
+                value={data.template ?? ''}
+                onChange={(event) => set({ template: event.target.value.trim() })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="block-language">Language</Label>
+              <Input
+                id="block-language"
+                placeholder="en"
+                value={data.language ?? 'en'}
+                onChange={(event) => set({ language: event.target.value.trim() })}
+              />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="block-to">Send to</Label>
+            <Input
+              id="block-to"
+              value={data.to ?? '{{lead.phone}}'}
+              onChange={(event) => set({ to: event.target.value })}
+            />
+            <VariableChips trigger={trigger} onPick={(token) => set({ to: token })} />
+          </div>
+          <div className="space-y-2">
+            <Label>
+              Values for the template’s {'{{1}}'}, {'{{2}}'}…
+            </Label>
+            {(data.params ?? []).map((param, index) => (
+              <div key={index} className="flex items-center gap-2">
+                <span className="text-muted-foreground w-10 text-xs">{`{{${index + 1}}}`}</span>
+                <Input
+                  aria-label={`Value ${index + 1}`}
+                  value={param}
+                  onChange={(event) =>
+                    set({
+                      params: (data.params ?? []).map((p, i) =>
+                        i === index ? event.target.value : p,
+                      ),
+                    })
+                  }
+                />
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  aria-label={`Remove value ${index + 1}`}
+                  onClick={() => set({ params: (data.params ?? []).filter((_, i) => i !== index) })}
+                >
+                  <Trash2 aria-hidden="true" />
+                </Button>
+              </div>
+            ))}
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => set({ params: [...(data.params ?? []), ''] })}
+            >
+              <Plus aria-hidden="true" /> Add a value
+            </Button>
+            <VariableChips
+              trigger={trigger}
+              onPick={(token) => set({ params: [...(data.params ?? []), token] })}
+            />
+          </div>
+          <p className="text-muted-foreground text-xs">
+            WhatsApp only allows templates Meta has approved. Create them in WhatsApp Manager;
+            connect your number in Apps → WhatsApp.
+          </p>
+        </div>
+      ) : null}
+
+      {type === 'call_api' ? (
+        <div className="space-y-3">
+          <div className="grid grid-cols-[6rem_1fr] gap-2">
+            <Select
+              aria-label="Method"
+              value={(data.method ?? 'POST').toUpperCase()}
+              onChange={(event) => set({ method: event.target.value })}
+            >
+              {['POST', 'GET', 'PUT', 'PATCH'].map((m) => (
+                <option key={m}>{m}</option>
+              ))}
+            </Select>
+            <Input
+              aria-label="Address"
+              placeholder="https://…"
+              value={data.url ?? ''}
+              onChange={(event) => set({ url: event.target.value.trim() })}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Headers (optional)</Label>
+            {(data.headers ?? []).map((header, index) => (
+              <div key={index} className="flex gap-2">
+                <Input
+                  aria-label={`Header ${index + 1} name`}
+                  placeholder="Name"
+                  value={header.key}
+                  onChange={(event) =>
+                    set({
+                      headers: (data.headers ?? []).map((h, i) =>
+                        i === index ? { ...h, key: event.target.value } : h,
+                      ),
+                    })
+                  }
+                />
+                <Input
+                  aria-label={`Header ${index + 1} value`}
+                  placeholder="Value"
+                  value={header.value}
+                  onChange={(event) =>
+                    set({
+                      headers: (data.headers ?? []).map((h, i) =>
+                        i === index ? { ...h, value: event.target.value } : h,
+                      ),
+                    })
+                  }
+                />
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  aria-label={`Remove header ${index + 1}`}
+                  onClick={() =>
+                    set({ headers: (data.headers ?? []).filter((_, i) => i !== index) })
+                  }
+                >
+                  <Trash2 aria-hidden="true" />
+                </Button>
+              </div>
+            ))}
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => set({ headers: [...(data.headers ?? []), { key: '', value: '' }] })}
+            >
+              <Plus aria-hidden="true" /> Add a header
+            </Button>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="block-body">Body (JSON)</Label>
+            <Textarea
+              id="block-body"
+              rows={5}
+              className="font-mono text-xs"
+              placeholder={'{"phone": "{{lead.phone}}", "amount": "{{amount}}"}'}
+              value={data.body ?? ''}
+              onChange={(event) => set({ body: event.target.value })}
+            />
+            <VariableChips
+              trigger={trigger}
+              onPick={(token) => set({ body: `${data.body ?? ''}${token}` })}
+            />
+          </div>
+          <p className="text-muted-foreground text-xs">
+            Sent by the background worker within a minute. Only https:// addresses on the public
+            internet.
+          </p>
         </div>
       ) : null}
 

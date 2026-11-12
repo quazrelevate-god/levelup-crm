@@ -27,6 +27,7 @@ import {
   ReactFlowProvider,
   useEdgesState,
   useNodesState,
+  useReactFlow,
 } from '@xyflow/react'
 import { ArrowLeft, FlaskConical, Play, Save, X } from 'lucide-react'
 
@@ -150,6 +151,7 @@ function Editor({ workflowId }: { readonly workflowId: string }) {
   const update = useUpdateWorkflow(workspaceId)
   const dark = useDarkClass()
 
+  const reactFlow = useReactFlow()
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
   const [name, setName] = useState('')
@@ -167,7 +169,9 @@ function Editor({ workflowId }: { readonly workflowId: string }) {
     setEdges(flow.edges)
     setName(workflow.data.name)
     setLoaded(true)
-  }, [workflow.data, loaded, setNodes, setEdges])
+    // Fit once the blocks have been measured, so a wide drawing opens whole.
+    window.setTimeout(() => void reactFlow.fitView({ padding: 0.15, maxZoom: 1 }), 80)
+  }, [workflow.data, loaded, setNodes, setEdges, reactFlow])
 
   const triggerNode = nodes.find((n) => n.type === 'trigger')
   const trigger = catalogue.data?.triggers.find((t) => t.key === triggerNode?.data.trigger)
@@ -399,6 +403,7 @@ function Editor({ workflowId }: { readonly workflowId: string }) {
                 elementsSelectable={shownRun === null}
                 deleteKeyCode={['Backspace', 'Delete']}
                 fitView
+                minZoom={0.2}
                 fitViewOptions={{ padding: 0.25, maxZoom: 1 }}
                 proOptions={{ hideAttribution: true }}
                 colorMode={dark ? 'dark' : 'light'}
@@ -421,6 +426,7 @@ function Editor({ workflowId }: { readonly workflowId: string }) {
                     trigger={trigger}
                     triggers={catalogue.data?.triggers ?? []}
                     operators={catalogue.data?.operators ?? []}
+                    purposes={catalogue.data?.call_purposes ?? []}
                     onChange={(next) => changeData(selectedNode.id, next)}
                     onDelete={() => removeBlock(selectedNode.id)}
                   />
@@ -455,9 +461,11 @@ function Palette({
   readonly onAdd: (type: NodeType) => void
   readonly disabled: boolean
 }) {
-  const groups: { title: string; hint: string; group: 'check' | 'action' }[] = [
+  const groups: { title: string; hint: string; group: 'check' | 'action' | 'timing' | 'send' }[] = [
     { title: 'Checks', hint: 'If… then go Yes or No', group: 'check' },
-    { title: 'Actions', hint: 'Do this to the lead', group: 'action' },
+    { title: 'Change the lead', hint: 'Do this to the lead', group: 'action' },
+    { title: 'Timing', hint: 'Pause before the next step', group: 'timing' },
+    { title: 'Reach out', hint: 'Call, message, or tell another system', group: 'send' },
   ]
   return (
     <aside className="w-52 shrink-0 space-y-4 overflow-y-auto" aria-label="Blocks">
@@ -503,7 +511,7 @@ function HowTo() {
       <p className="text-foreground font-semibold">How to build it</p>
       <ol className="list-decimal space-y-1.5 pl-4">
         <li>Click the dark “When this happens” block and choose the trigger.</li>
-        <li>Add a check, e.g. “If the payment…” amount equals 400.</li>
+        <li>Add a check, e.g. “If…” amount equals 400.</li>
         <li>From its green Yes dot, add what should happen: change stage, update fields.</li>
         <li>Save, press Test to try it on a lead, then switch it On.</li>
       </ol>

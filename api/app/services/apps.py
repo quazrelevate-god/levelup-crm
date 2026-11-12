@@ -28,12 +28,15 @@ import datetime as dt
 import hashlib
 import hmac
 import json
+import re
 import secrets
 import uuid
 from collections.abc import Mapping, Sequence
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
+import httpx
 from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -53,7 +56,10 @@ __all__ = [
     "APPS",
     "AppService",
     "AppSpec",
+    "CalendlyReceiver",
     "RazorpayReceiver",
+    "calendly_signature",
+    "normalise_calendly",
     "normalise_razorpay",
     "razorpay_signature",
 ]
@@ -77,8 +83,35 @@ APPS: dict[str, AppSpec] = {
             "and start your workflows."
         ),
         settings={"create_lead_if_missing": False},
-    )
+    ),
+    "calendly": AppSpec(
+        key="calendly",
+        label="Calendly",
+        description=(
+            "Know the moment a lead books (or cancels) a meeting — the interview, say — "
+            "and let your workflows move them along."
+        ),
+        settings={"create_lead_if_missing": False},
+    ),
+    "whatsapp": AppSpec(
+        key="whatsapp",
+        label="WhatsApp",
+        description=(
+            "Send approved WhatsApp template messages from your own business number, "
+            "from any workflow (Meta's WhatsApp Cloud API)."
+        ),
+        settings={"phone_number_id": ""},
+    ),
 }
+
+#: Calendly event → the CRM trigger it starts.
+CALENDLY_EVENTS: dict[str, str] = {
+    "invitee.created": "calendly.invitee_created",
+    "invitee.canceled": "calendly.invitee_canceled",
+}
+CALENDLY_API = "https://api.calendly.com"
+#: How old a signed Calendly delivery may be. Older is a replay.
+CALENDLY_TOLERANCE = dt.timedelta(minutes=10)
 
 #: Razorpay event → the CRM trigger it starts. A payment link, an order and a
 #: bare payment all end in a captured payment; they share a trigger and are
@@ -156,6 +189,54 @@ def normalise_razorpay(payload: Mapping[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in data.items() if v not in (None, "", {})}
 
 
+def calendly_signature(body: bytes, key: str, timestamp: str) -> str:
+    return hmac.new(key.encode(), f"{timestamp}.".encode() + body, hashlib.sha256).hexdigest()
+
+
+_PHONE_LIKE = re.compile(r"^\+?[\d\s\-()]{8,20}$")
+
+
+def normalise_calendly(payload: Mapping[str, Any], *, timezone: str) -> dict[str, Any]:
+    """The fields a workflow can check or copy, from a booking or cancellation."""
+    p = payload.get("payload") if isinstance(payload.get("payload"), Mapping) else {}
+    assert isinstance(p, Mapping)
+    event = p.get("scheduled_event") if isinstance(p.get("scheduled_event"), Mapping) else {}
+    assert isinstance(event, Mapping)
+    phone = _first(p.get("text_reminder_number"))
+    for answer in p.get("questions_and_answers") or []:
+        if phone:
+            break
+        value = str((answer or {}).get("answer") or "").strip()
+        if _PHONE_LIKE.match(value):
+            phone = value
+    start = _first(event.get("start_time"))
+    shown = None
+    if start:
+        try:
+            shown = (
+                dt.datetime.fromisoformat(start.replace("Z", "+00:00"))
+                .astimezone(ZoneInfo(timezone))
+                .strftime("%a %d %b, %I:%M %p")
+            )
+        except ValueError:
+            shown = start
+    cancellation = p.get("cancellation") if isinstance(p.get("cancellation"), Mapping) else {}
+    assert isinstance(cancellation, Mapping)
+    data: dict[str, Any] = {
+        "event_name": _first(event.get("name")),
+        "start_time": shown,
+        "start_at": start,
+        "name": _first(p.get("name")),
+        "email": _first(p.get("email")),
+        "phone": phone,
+        "reschedule_url": _first(p.get("reschedule_url")),
+        "cancel_url": _first(p.get("cancel_url")),
+        "cancel_reason": _first(cancellation.get("reason")),
+        "invitee": _first(p.get("uri")),
+    }
+    return {k: v for k, v in data.items() if v not in (None, "")}
+
+
 def _bounded(payload: Mapping[str, Any]) -> dict[str, Any]:
     text = json.dumps(payload, default=str)
     if len(text) <= _MAX_PAYLOAD_BYTES:
@@ -207,12 +288,15 @@ class AppService:
         is_active: bool | None = None,
         secret: str | None = None,
         settings: Mapping[str, Any] | None = None,
+        credential: str | None = None,
     ) -> AppConnection:
         row = await self.get(provider)
         if is_active is not None:
             row.is_active = is_active
         if secret is not None:
             row.secret = secret.strip() or None
+        if credential is not None:
+            row.credential = credential.strip() or None
         if settings is not None:
             allowed = APPS[provider].settings
             unknown = set(settings) - set(allowed)
@@ -226,6 +310,75 @@ class AppService:
         """A new webhook URL; the old one stops working at once."""
         row = await self.get(provider)
         row.hook_token = secrets.token_urlsafe(32)
+        await self._session.flush()
+        return row
+
+    async def setup_calendly(
+        self, token: str, *, hook_url: str, transport: httpx.AsyncBaseTransport | None = None
+    ) -> AppConnection:
+        """Point the company's Calendly at this CRM, using their own token.
+
+        Calendly has no screen for webhooks — they are created through its API —
+        so the CRM does it: who the token belongs to, then a subscription for
+        bookings and cancellations, signed with a key only this CRM knows.
+        """
+        row = await self.get("calendly")
+        token = token.strip()
+        if not token:
+            raise api_error(422, "token_required", "Paste your Calendly personal access token")
+        headers = {"Authorization": f"Bearer {token}"}
+        async with httpx.AsyncClient(
+            base_url=CALENDLY_API, timeout=20.0, transport=transport
+        ) as client:
+            me = await client.get("/users/me", headers=headers)
+            if me.status_code == 401:
+                raise api_error(422, "calendly_token_refused", "Calendly did not accept that token")
+            if me.status_code >= 300:
+                raise api_error(502, "calendly_unreachable", f"Calendly answered {me.status_code}")
+            resource = me.json().get("resource") or {}
+            user_uri, org_uri = resource.get("uri"), resource.get("current_organization")
+            old = (row.settings or {}).get("subscription_uri")
+            if old:
+                await client.delete(str(old).replace(CALENDLY_API, ""), headers=headers)
+            signing_key = secrets.token_urlsafe(32)
+            body = {
+                "url": hook_url,
+                "events": list(CALENDLY_EVENTS),
+                "organization": org_uri,
+                "signing_key": signing_key,
+                "scope": "organization",
+            }
+            made = await client.post("/webhook_subscriptions", headers=headers, json=body)
+            scope = "organization"
+            if made.status_code == 403:
+                # Not an organisation admin: watch this user's own calendar.
+                made = await client.post(
+                    "/webhook_subscriptions",
+                    headers=headers,
+                    json={**body, "scope": "user", "user": user_uri},
+                )
+                scope = "user"
+            if made.status_code == 403:
+                raise api_error(
+                    422,
+                    "calendly_plan",
+                    "Calendly refused: webhooks need a paid Calendly plan (Standard or above).",
+                )
+            if made.status_code >= 300:
+                message = made.json().get("message") if made.content else None
+                raise api_error(
+                    502, "calendly_refused", f"Calendly said no: {message or made.status_code}"
+                )
+        resource = made.json().get("resource") or {}
+        row.credential = token
+        row.secret = signing_key
+        row.is_active = True
+        row.settings = {
+            **(row.settings or {}),
+            "subscription_uri": resource.get("uri"),
+            "scope": scope,
+            "account": (me.json().get("resource") or {}).get("email"),
+        }
         await self._session.flush()
         return row
 
@@ -257,8 +410,10 @@ class Receipt:
     accepted: bool
 
 
-class RazorpayReceiver:
-    """One Razorpay delivery, from raw bytes to workflows run."""
+class AppReceiver:
+    """What every app's delivery shares: log it, find the lead, claim it once,
+    note it on the timeline and run the workflows. Each app supplies how it
+    proves the sender and what its payload means."""
 
     def __init__(
         self, session: ScopedSession, *, workspace: Workspace, connection: AppConnection
@@ -275,96 +430,6 @@ class RazorpayReceiver:
         if self._leads is None:
             self._leads = await system_lead_service(self._session, self._workspace)
         return self._leads
-
-    async def receive(self, body: bytes, signature: str | None) -> Receipt:
-        connection = self._connection
-        connection.last_event_at = dt.datetime.now(dt.UTC)
-
-        if not connection.secret:
-            return Receipt(
-                self._log("unknown", "REJECTED", error="The webhook secret is not set in the CRM"),
-                accepted=False,
-            )
-        expected = razorpay_signature(body, connection.secret)
-        if not signature or not hmac.compare_digest(expected, signature.strip()):
-            return Receipt(
-                self._log(
-                    "unknown",
-                    "REJECTED",
-                    error="The signature did not match. The secret in Razorpay and in the "
-                    "CRM must be the same.",
-                ),
-                accepted=False,
-            )
-
-        try:
-            payload = json.loads(body)
-        except ValueError:
-            payload = None
-        if not isinstance(payload, dict):
-            return Receipt(self._log("unknown", "IGNORED", error="Not a JSON object"), True)
-
-        event_type = str(payload.get("event") or "unknown")[:80]
-        trigger = RAZORPAY_EVENTS.get(event_type)
-        if trigger is None:
-            return Receipt(
-                self._log(event_type, "IGNORED", payload=payload, error="Not a payment event"),
-                True,
-            )
-
-        data = normalise_razorpay(payload)
-        dedupe = data.get("payment_id") or data.get("payment_link_id") or data.get("order_id")
-        lead = await self._match(data)
-        create = lead is None and bool((connection.settings or {}).get("create_lead_if_missing"))
-        outcome = "MATCHED" if lead else ("CREATED_LEAD" if create else "NO_LEAD")
-
-        claimed = await self._claim(
-            event_type,
-            outcome,
-            payload=payload,
-            trigger=trigger,
-            data=data,
-            dedupe_key=str(dedupe)[:160] if dedupe else None,
-            lead=lead,
-        )
-        if claimed is None:
-            # Another delivery for this payment got here first.
-            event = self._log(
-                event_type,
-                "DUPLICATE",
-                payload=payload,
-                trigger=trigger,
-                data=data,
-                dedupe_key=str(dedupe)[:160] if dedupe else None,
-                lead=lead,
-            )
-            await self._session.flush()
-            return Receipt(event, True)
-        event = claimed
-
-        if create:
-            lead = await self._create_lead(data)
-            if lead is None:
-                event.outcome = "NO_LEAD"
-                event.error = (
-                    "No lead has this phone or email, and a new one could not be created "
-                    "from this payment"
-                )
-            else:
-                event.lead_id = lead.id
-        if lead is None:
-            if event.error is None:
-                event.error = "No lead has this phone or email"
-            await self._session.flush()
-            return Receipt(event, True)
-
-        await self._note(lead, trigger, data)
-        runs = await WorkflowEngine(self._session, workspace=self._workspace).run_trigger(
-            trigger, lead, data, app_event_id=event.id
-        )
-        event.workflows_run = len(runs)
-        await self._session.flush()
-        return Receipt(event, True)
 
     async def _claim(
         self,
@@ -517,6 +582,114 @@ class RazorpayReceiver:
         await self._session.flush()
         return lead
 
+    async def _deliver(
+        self,
+        event_type: str,
+        trigger: str,
+        payload: Mapping[str, Any],
+        data: Mapping[str, Any],
+        dedupe: Any,
+    ) -> Receipt:
+        connection = self._connection
+        lead = await self._match(data)
+        create = lead is None and bool((connection.settings or {}).get("create_lead_if_missing"))
+        outcome = "MATCHED" if lead else ("CREATED_LEAD" if create else "NO_LEAD")
+
+        claimed = await self._claim(
+            event_type,
+            outcome,
+            payload=payload,
+            trigger=trigger,
+            data=data,
+            dedupe_key=str(dedupe)[:160] if dedupe else None,
+            lead=lead,
+        )
+        if claimed is None:
+            # Another delivery for this payment got here first.
+            event = self._log(
+                event_type,
+                "DUPLICATE",
+                payload=payload,
+                trigger=trigger,
+                data=data,
+                dedupe_key=str(dedupe)[:160] if dedupe else None,
+                lead=lead,
+            )
+            await self._session.flush()
+            return Receipt(event, True)
+        event = claimed
+
+        if create:
+            lead = await self._create_lead(data)
+            if lead is None:
+                event.outcome = "NO_LEAD"
+                event.error = (
+                    "No lead has this phone or email, and a new one could not be created "
+                    "from what the app sent"
+                )
+            else:
+                event.lead_id = lead.id
+        if lead is None:
+            if event.error is None:
+                event.error = "No lead has this phone or email"
+            await self._session.flush()
+            return Receipt(event, True)
+
+        await self._note(lead, trigger, data)
+        runs = await WorkflowEngine(self._session, workspace=self._workspace).run_trigger(
+            trigger, lead, data, app_event_id=event.id
+        )
+        event.workflows_run = len(runs)
+        await self._session.flush()
+        return Receipt(event, True)
+
+    async def _note(self, lead: Lead, trigger: str, data: Mapping[str, Any]) -> None:
+        raise NotImplementedError  # pragma: no cover - each app writes its own
+
+
+class RazorpayReceiver(AppReceiver):
+    """One Razorpay delivery, from raw bytes to workflows run."""
+
+    async def receive(self, body: bytes, signature: str | None) -> Receipt:
+        connection = self._connection
+        connection.last_event_at = dt.datetime.now(dt.UTC)
+
+        if not connection.secret:
+            return Receipt(
+                self._log("unknown", "REJECTED", error="The webhook secret is not set in the CRM"),
+                accepted=False,
+            )
+        expected = razorpay_signature(body, connection.secret)
+        if not signature or not hmac.compare_digest(expected, signature.strip()):
+            return Receipt(
+                self._log(
+                    "unknown",
+                    "REJECTED",
+                    error="The signature did not match. The secret in Razorpay and in the "
+                    "CRM must be the same.",
+                ),
+                accepted=False,
+            )
+
+        try:
+            payload = json.loads(body)
+        except ValueError:
+            payload = None
+        if not isinstance(payload, dict):
+            return Receipt(self._log("unknown", "IGNORED", error="Not a JSON object"), True)
+
+        event_type = str(payload.get("event") or "unknown")[:80]
+        trigger = RAZORPAY_EVENTS.get(event_type)
+        if trigger is None:
+            return Receipt(
+                self._log(event_type, "IGNORED", payload=payload, error="Not a payment event"),
+                True,
+            )
+
+        data = normalise_razorpay(payload)
+        dedupe = data.get("payment_id") or data.get("payment_link_id") or data.get("order_id")
+        return await self._deliver(event_type, trigger, payload, data, dedupe)
+
     async def _note(self, lead: Lead, trigger: str, data: Mapping[str, Any]) -> None:
         """The payment on the lead's timeline, whatever the workflows do."""
         writer = ActionWriter(self._session, actor_id=None)
@@ -532,4 +705,71 @@ class RazorpayReceiver:
             body = f"💳 Razorpay: payment received — {amount}"
         reference = ", ".join(str(data[k]) for k in ("payment_id", "method") if data.get(k))
         writer.record_note(lead, body=body + (f" ({reference})" if reference else ""))
+        await self._session.flush()
+
+
+class CalendlyReceiver(AppReceiver):
+    """One Calendly delivery: a booking or a cancellation."""
+
+    async def receive(self, body: bytes, signature: str | None) -> Receipt:
+        connection = self._connection
+        connection.last_event_at = dt.datetime.now(dt.UTC)
+        if not connection.secret:
+            return Receipt(
+                self._log("unknown", "REJECTED", error="Calendly is not set up in the CRM"),
+                accepted=False,
+            )
+        parts = dict(piece.split("=", 1) for piece in (signature or "").split(",") if "=" in piece)
+        stamp, given = parts.get("t", ""), parts.get("v1", "")
+        expected = calendly_signature(body, connection.secret, stamp) if stamp else ""
+        fresh = False
+        try:
+            fresh = (
+                abs(dt.datetime.now(dt.UTC) - dt.datetime.fromtimestamp(int(stamp), dt.UTC))
+                <= CALENDLY_TOLERANCE
+            )
+        except ValueError:
+            fresh = False
+        if not given or not hmac.compare_digest(expected, given) or not fresh:
+            return Receipt(
+                self._log(
+                    "unknown",
+                    "REJECTED",
+                    error="The signature did not match (or the delivery is too old). "
+                    "Set Calendly up again from this screen.",
+                ),
+                accepted=False,
+            )
+        try:
+            payload = json.loads(body)
+        except ValueError:
+            payload = None
+        if not isinstance(payload, dict):
+            return Receipt(self._log("unknown", "IGNORED", error="Not a JSON object"), True)
+        event_type = str(payload.get("event") or "unknown")[:80]
+        trigger = CALENDLY_EVENTS.get(event_type)
+        if trigger is None:
+            return Receipt(
+                self._log(event_type, "IGNORED", payload=payload, error="Not a booking event"),
+                True,
+            )
+        data = normalise_calendly(payload, timezone=self._workspace.timezone)
+        return await self._deliver(event_type, trigger, payload, data, data.get("invitee"))
+
+    async def _note(self, lead: Lead, trigger: str, data: Mapping[str, Any]) -> None:
+        writer = ActionWriter(self._session, actor_id=None)
+        await writer.open_changeset(
+            source=ChangesetSource.AUTOMATION,
+            summary=f"Calendly booking for {lead.identity_value}"[:200],
+        )
+        what = data.get("event_name") or "meeting"
+        when = data.get("start_time") or "an unknown time"
+        if trigger == "calendly.invitee_canceled":
+            reason = data.get("cancel_reason")
+            body = f"📅 Calendly: “{what}” on {when} was cancelled" + (
+                f" — {reason}" if reason else ""
+            )
+        else:
+            body = f"📅 Calendly: “{what}” booked for {when}"
+        writer.record_note(lead, body=body)
         await self._session.flush()

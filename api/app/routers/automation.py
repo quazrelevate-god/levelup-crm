@@ -10,9 +10,10 @@ from __future__ import annotations
 import uuid
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 
-from app.errors import not_found
+from app.errors import api_error, not_found
+from app.integrations.whatsapp import send_template, whatsapp_number
 from app.models.automation import AppConnection, AppEvent, Workflow, WorkflowRun
 from app.models.lead import Lead
 from app.schemas.automation import (
@@ -20,12 +21,15 @@ from app.schemas.automation import (
     AppRead,
     AppUpdate,
     AutomationCatalogue,
+    CalendlySetup,
+    CallPurposeRead,
     GraphProblemRead,
     NeverCallRead,
     NeverCallWrite,
     OperatorRead,
     TriggerRead,
     VariableRead,
+    WhatsAppTest,
     WorkflowCreate,
     WorkflowRead,
     WorkflowRunRead,
@@ -38,6 +42,8 @@ from app.services.apps import APPS, AppService
 from app.services.system_filters import parse_rule
 from app.services.voice_settings import read_never_call, write_never_call
 from app.services.workflows import (
+    CALL_PURPOSES,
+    LEAD_VARIABLES,
     OPERATORS,
     TRIGGERS,
     WorkflowEngine,
@@ -90,6 +96,10 @@ async def automation_catalogue(scope: Admin) -> AutomationCatalogue:
             OperatorRead(key=k, label=v, needs_value=k not in ("is_empty", "is_not_empty"))
             for k, v in OPERATORS.items()
         ],
+        call_purposes=[CallPurposeRead(key=k, label=v) for k, v in CALL_PURPOSES.items()],
+        lead_variables=[
+            VariableRead(key=v.key, label=v.label, kind=v.kind) for v in LEAD_VARIABLES
+        ],
     )
 
 
@@ -106,6 +116,7 @@ def _app_read(provider: str, row: AppConnection | None) -> AppRead:
         is_active=bool(row and row.is_active),
         webhook_path=HOOK_PATH.format(provider=provider, token=row.hook_token) if row else None,
         secret_set=bool(row and row.secret),
+        credential_set=bool(row and row.credential),
         settings={**spec.settings, **((row.settings or {}) if row else {})},
         last_event_at=row.last_event_at if row else None,
     )
@@ -135,7 +146,11 @@ async def connect_app(provider: str, scope: Admin) -> AppRead:
 @router.patch("/apps/{provider}", response_model=AppRead, summary="Configure a connected app")
 async def update_app(provider: str, payload: AppUpdate, scope: Admin) -> AppRead:
     row = await AppService(scope.session, workspace=scope.workspace).update(
-        provider, is_active=payload.is_active, secret=payload.secret, settings=payload.settings
+        provider,
+        is_active=payload.is_active,
+        secret=payload.secret,
+        settings=payload.settings,
+        credential=payload.credential,
     )
     await scope.session.commit()
     await scope.session.refresh(row)
@@ -152,6 +167,70 @@ async def rotate_app_url(provider: str, scope: Admin) -> AppRead:
     await scope.session.commit()
     await scope.session.refresh(row)
     return _app_read(provider, row)
+
+
+def public_base(request: Request) -> str:
+    """This API's address as the outside world reaches it (behind Railway's proxy)."""
+    configured = getattr(request.app.state.settings, "public_api_url", None)
+    if configured:
+        return str(configured).rstrip("/")
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
+    return f"{proto.split(',')[0].strip()}://{host.split(',')[0].strip()}"
+
+
+@router.post(
+    "/apps/calendly/setup",
+    response_model=AppRead,
+    summary="Connect Calendly with a personal access token (creates its webhook)",
+)
+async def setup_calendly(payload: CalendlySetup, request: Request, scope: Admin) -> AppRead:
+    service = AppService(scope.session, workspace=scope.workspace)
+    row = await service.connect("calendly", actor_id=scope.membership_id)
+    path = HOOK_PATH.format(provider="calendly", token=row.hook_token)
+    row = await service.setup_calendly(
+        payload.token,
+        hook_url=f"{public_base(request)}{path}",
+        transport=getattr(request.app.state, "calendly_transport", None),
+    )
+    await scope.session.commit()
+    await scope.session.refresh(row)
+    return _app_read("calendly", row)
+
+
+@router.post(
+    "/apps/whatsapp/test",
+    response_model=WorkflowTestResult,
+    summary="Send Meta's hello_world template to check the connection",
+)
+async def test_whatsapp(
+    payload: WhatsAppTest, request: Request, scope: Admin
+) -> WorkflowTestResult:
+    row = await AppService(scope.session, workspace=scope.workspace).get("whatsapp")
+    phone_id = str((row.settings or {}).get("phone_number_id") or "").strip()
+    if not row.credential or not phone_id:
+        raise api_error(422, "whatsapp_not_connected", "Save the phone number ID and token first")
+    to = whatsapp_number(payload.to, scope.workspace.default_country_code)
+    if not to:
+        raise api_error(422, "invalid_number", "That is not a phone number")
+    result = await send_template(
+        phone_number_id=phone_id,
+        token=row.credential,
+        to=to,
+        template="hello_world",
+        language="en_US",
+        transport=getattr(request.app.state, "whatsapp_transport", None),
+    )
+    step = {
+        "node_id": "test",
+        "type": "send_whatsapp",
+        "label": "Test message",
+        "result": "done" if result.ok else "failed",
+        "detail": f"Sent to +{to}" if result.ok else f"WhatsApp said no: {result.error}",
+    }
+    return WorkflowTestResult(
+        status="SUCCESS" if result.ok else "FAILED", steps=[step], error=result.error
+    )
 
 
 def _event_read(event: AppEvent, lead: Lead | None) -> AppEventRead:
@@ -310,6 +389,7 @@ def _run_read(run: WorkflowRun, lead: Lead | None) -> WorkflowRunRead:
         data=run.data or {},
         duration_ms=run.duration_ms,
         error=run.error,
+        resume_at=run.resume_at,
         created_at=run.created_at,
     )
 

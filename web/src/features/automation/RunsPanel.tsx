@@ -43,6 +43,8 @@ export function RunsPanel({
           <option value="">All runs</option>
           <option value="SUCCESS">Successful</option>
           <option value="FAILED">Failed</option>
+          <option value="WAITING">Waiting</option>
+          <option value="CANCELLED">Stopped</option>
         </Select>
         {runs.data ? (
           <span className="text-muted-foreground text-sm">
@@ -125,9 +127,7 @@ export function RunsPanel({
                     </td>
                     <td className="px-3 py-2">{amountText(run.data) || '—'}</td>
                     <td className="px-3 py-2">
-                      <Badge variant={run.status === 'FAILED' ? 'destructive' : 'success'}>
-                        {run.status === 'FAILED' ? 'Failed' : 'Success'}
-                      </Badge>
+                      <RunStatus run={run} />
                     </td>
                     <td className="text-muted-foreground px-3 py-2">{run.duration_ms} ms</td>
                     <td className="px-3 py-2 text-right">
@@ -183,5 +183,32 @@ export function RunsPanel({
         </div>
       )}
     </div>
+  )
+}
+
+function RunStatus({ run }: { readonly run: WorkflowRun }) {
+  if (run.status === 'WAITING') {
+    return (
+      <span className="space-y-0.5">
+        <Badge variant="outline">Waiting</Badge>
+        {run.resume_at ? (
+          <span className="text-muted-foreground block text-xs">
+            until {new Date(run.resume_at).toLocaleString()}
+          </span>
+        ) : null}
+      </span>
+    )
+  }
+  if (run.status === 'CANCELLED') {
+    return (
+      <Badge variant="outline" title={run.error ?? undefined}>
+        Stopped
+      </Badge>
+    )
+  }
+  return (
+    <Badge variant={run.status === 'FAILED' ? 'destructive' : 'success'}>
+      {run.status === 'FAILED' ? 'Failed' : 'Success'}
+    </Badge>
   )
 }

@@ -168,6 +168,12 @@ class Settings(BaseSettings):
     #: the window is refused before anything is written or sent. Empty disables
     #: the check, which only a test suite should do.
     voice_calling_hours: str = "09:00-21:00"
+    #: How many queued AI calls may be going at once, across every company —
+    #: they share one Bolna account (docs/23). A bulk AI call queues the rest;
+    #: the worker starts the next as each one ends. Bolna refuses calls over
+    #: the account's own concurrency limit (10 on the current plan), so this
+    #: must not exceed it.
+    voice_max_parallel_calls: int = Field(default=10, ge=1, le=50)
     #: What a client pays per calling number per 30 days, in the workspace's
     #: currency, charged from the wallet (docs/16). About $10 against Bolna's $5.
     #: Applies to new requests; a number already rented keeps its price.
@@ -178,6 +184,9 @@ class Settings(BaseSettings):
     #: Hosts a call recording may be fetched from (docs/20). Bolna serves the
     #: link and redirects to its S3 storage, which is allowed separately.
     voice_recording_hosts: tuple[str, ...] = ("api.bolna.ai",)
+    #: This API's public address, for webhooks the CRM registers itself (Calendly).
+    #: Unset: read from the request, through the proxy's X-Forwarded headers.
+    public_api_url: str | None = None
 
     #: Base URL of the LevelUp Learning knowledge base, e.g.
     #: https://kb-production.up.railway.app. When set, the voice trigger reads

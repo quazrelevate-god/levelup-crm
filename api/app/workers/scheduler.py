@@ -4,8 +4,9 @@ The first milestone that needs a *process* rather than a function call. M6's
 index builds are invoked directly by the settings service; this extends that
 module's home rather than standing up a second worker, as the handoff asks.
 
-Four cron entries (docs/21): the scheduler, the outbox dispatcher, a
-heartbeat the operator console reads, and calling-number rent. The scheduler
+Six cron entries (docs/21, docs/22): the scheduler, the outbox dispatcher, a
+heartbeat the operator console reads, calling-number rent, scheduled AI calls,
+and workflows resuming after a Wait. The scheduler
 ticks every minute; the outbox dispatcher runs more often than that, because a
 webhook that arrives a minute after the event is a webhook most integrations
 would call broken. It walks workspaces and asks each one
@@ -34,6 +35,7 @@ from app.events.dispatcher import HttpxTransport, run_dispatch
 from app.models import Workspace
 from app.services.email import build_sender
 from app.services.number_requests import NumberRequestService
+from app.services.scheduled_call_runner import place_due_calls, resume_waiting_runs
 from app.services.scheduling import run_due_schedules
 from app.tenancy.session import ScopedSession
 
@@ -42,6 +44,8 @@ __all__ = [
     "WorkerSettings",
     "dispatch",
     "heartbeat",
+    "place_calls",
+    "resume_runs",
     "settle_numbers",
     "tick",
 ]
@@ -124,6 +128,16 @@ async def heartbeat(ctx: dict[str, Any]) -> str:
     return moment
 
 
+async def place_calls(ctx: dict[str, Any]) -> dict[str, int]:
+    """Place scheduled AI calls that are due (docs/22)."""
+    return await place_due_calls(ctx["session_factory"], settings=get_settings())
+
+
+async def resume_runs(ctx: dict[str, Any]) -> dict[str, int]:
+    """Carry on workflows whose Wait is over, and send what they queued (docs/22)."""
+    return await resume_waiting_runs(ctx["session_factory"])
+
+
 async def settle_numbers(ctx: dict[str, Any]) -> int:
     """Charge calling-number rent that has fallen due, in every workspace.
 
@@ -179,6 +193,9 @@ class WorkerSettings:
         cron(heartbeat, minute=set(range(60)), run_at_startup=True),
         # Hourly, at a quiet minute.
         cron(settle_numbers, minute={17}, run_at_startup=False),
+        # Every minute, offset from the tick so they do not start together.
+        cron(place_calls, second={30}, run_at_startup=False),
+        cron(resume_runs, second={15, 45}, run_at_startup=False),
     ]
     on_startup = startup
     on_shutdown = shutdown

@@ -27,12 +27,14 @@ The path for both is the one contract §5 froze:
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
 import uuid
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from fastapi.responses import StreamingResponse
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.api_keys import ApiKeyScope, require_api_key, resolve_api_key
@@ -49,14 +51,25 @@ from app.integrations.bolna import (
 )
 from app.models.billing import VoiceNumberRequest
 from app.models.field import LeadField
+from app.models.lead import Lead
+from app.models.user import User
+from app.models.voice import VoiceScheduledCall
 from app.permissions import FieldProjectionService, FieldWriteFilter, load_grants
 from app.schemas.common import Page, PageParams, page_params
 from app.schemas.voice import (
+    AutoCallbackSetting,
+    BulkCallCreate,
+    BulkCallResult,
+    BulkCallStatus,
+    BulkCallStop,
+    BulkCallStopped,
     ExtractionRead,
     NumberRequestCreate,
     NumberRequestFulfil,
     NumberRequestRead,
     NumberRequestsRead,
+    ScheduledCallCreate,
+    ScheduledCallRead,
     VoiceApprovalRead,
     VoiceApprovalWrite,
     VoiceCallDetailRead,
@@ -78,9 +91,11 @@ from app.schemas.voice import (
 )
 from app.services.call_facts import CallFactService
 from app.services.email import Outgoing, build_sender
-from app.services.leads import LeadService
+from app.services.leads import MAX_BULK_LEADS, LeadService, lead_visibility_clause
 from app.services.number_requests import NumberRequestService
 from app.services.program_context import ProgramContextService
+from app.services.scheduled_call_runner import calls_in_progress
+from app.services.scheduled_calls import ScheduledCallService
 from app.services.voice_approval import VoiceApprovalService
 from app.services.voice_calls import VoiceCallService
 from app.services.voice_context import VoiceContext, VoiceContextService
@@ -89,6 +104,7 @@ from app.services.voice_history import CallWithLead, VoiceCallHistoryService
 from app.services.voice_hours import parse_calling_hours
 from app.services.voice_postcall import CallSummarizer, extractions_from_payload
 from app.services.voice_recordings import call_ending, open_recording, recording_url
+from app.services.voice_settings import read_auto_callback, write_auto_callback
 from app.services.voice_variables import variable_catalogue
 from app.tenancy.scoping import WorkspaceScope, require_workspace, require_workspace_admin
 
@@ -1076,3 +1092,254 @@ async def receive_bolna_webhook(
 
     scope = await resolve_api_key(request, session, webhook_key)
     return await _process_execution(scope, payload, request)
+
+
+# --- scheduled AI calls (docs/22) --------------------------------------------
+
+
+def _scheduled_service(request: Request, scope: WorkspaceScope) -> ScheduledCallService:
+    return ScheduledCallService(
+        scope.session,
+        workspace=scope.workspace,
+        actor_id=scope.membership_id,
+        hours=parse_calling_hours(request.app.state.settings.voice_calling_hours),
+    )
+
+
+def _scheduled_read(row: VoiceScheduledCall, lead: Lead) -> ScheduledCallRead:
+    name = (lead.values or {}).get("name")
+    return ScheduledCallRead(
+        id=row.id,
+        lead_id=row.lead_id,
+        lead_name=str(name) if name else lead.identity_value,
+        due_at=row.due_at,
+        status=row.status,
+        source=row.source,
+        purpose=row.purpose,
+        reason=row.reason,
+        call_id=row.call_id,
+        attempts=row.attempts,
+        last_error=row.last_error,
+        created_at=row.created_at,
+    )
+
+
+@router.get(
+    "/voice/scheduled-calls",
+    response_model=Page[ScheduledCallRead],
+    summary="AI calls waiting to be placed (or one lead's, any status)",
+)
+async def list_scheduled_calls(
+    request: Request,
+    scope: Annotated[WorkspaceScope, Depends(require_workspace)],
+    leads: Annotated[LeadService, Depends(_lead_service)],
+    params: Annotated[PageParams, Depends(page_params)],
+    lead_id: Annotated[uuid.UUID | None, Query()] = None,
+    upcoming_only: Annotated[bool, Query()] = True,
+) -> Page[ScheduledCallRead]:
+    _require(scope, "view_call_history")
+    if lead_id is not None:
+        await leads.get_lead(lead_id)  # 404 for a lead this caller cannot see
+    rows, total = await _scheduled_service(request, scope).list_calls(
+        lead_id=lead_id,
+        statuses=("PENDING", "PLACING") if upcoming_only else None,
+        limit=params.limit,
+        offset=params.offset,
+    )
+    visible = []
+    for row, lead in rows:
+        if (
+            lead_id is None
+            and not scope.sees_all_members
+            and lead.assignee_id not in (scope.visible_membership_ids)
+        ):
+            continue
+        visible.append(_scheduled_read(row, lead))
+    return Page(items=visible, total=total, limit=params.limit, offset=params.offset)
+
+
+@router.post(
+    "/voice/scheduled-calls",
+    response_model=ScheduledCallRead,
+    status_code=201,
+    summary="Schedule an AI call for later",
+)
+async def create_scheduled_call(
+    payload: ScheduledCallCreate,
+    request: Request,
+    scope: Annotated[WorkspaceScope, Depends(require_workspace)],
+    leads: Annotated[LeadService, Depends(_lead_service)],
+) -> ScheduledCallRead:
+    _require(scope, "log_calls")
+    lead = await leads.get_lead(payload.lead_id)
+    if payload.due_at.tzinfo is None:
+        raise api_error(422, "naive_time", "Send the time with its timezone")
+    row = await _scheduled_service(request, scope).schedule(
+        lead, due_at=payload.due_at, source="MANUAL", reason=payload.reason
+    )
+    await scope.session.commit()
+    await scope.session.refresh(row)
+    await scope.session.refresh(lead)
+    return _scheduled_read(row, lead)
+
+
+@router.post(
+    "/voice/scheduled-calls/bulk",
+    response_model=BulkCallResult,
+    status_code=201,
+    summary="Call the selected leads with AI now — a few at a time, the rest queued",
+)
+async def bulk_ai_call(
+    payload: BulkCallCreate,
+    request: Request,
+    scope: Annotated[WorkspaceScope, Depends(require_workspace)],
+    leads: Annotated[LeadService, Depends(_lead_service)],
+) -> BulkCallResult:
+    """Queue the leads for the worker, which keeps `voice_max_parallel_calls`
+    going and starts the next as each one ends (docs/23).
+
+    Nothing is dialled from this request: a bulk call of 300 leads placed
+    inline would hold the request open for minutes and pile every call onto
+    Bolna at once.
+    """
+    _require(scope, "log_calls")
+    if len(payload.lead_ids) > MAX_BULK_LEADS:  # pragma: no cover - the schema caps it
+        raise api_error(422, "bulk_limit_exceeded", f"At most {MAX_BULK_LEADS} leads at once")
+    found = await leads.visible_leads(payload.lead_ids)
+    result = await _scheduled_service(request, scope).queue_bulk(found, now=dt.datetime.now(dt.UTC))
+    await scope.session.commit()
+    return BulkCallResult(
+        queued=result.queued,
+        already_waiting=result.already_waiting,
+        never_call=result.never_call,
+        not_found=len(set(payload.lead_ids)) - len(found),
+        starts_at=result.starts_at,
+        at_once=request.app.state.settings.voice_max_parallel_calls,
+    )
+
+
+@router.get(
+    "/voice/scheduled-calls/bulk",
+    response_model=BulkCallStatus,
+    summary="How far the bulk AI call has got",
+)
+async def bulk_ai_call_status(
+    request: Request,
+    scope: Annotated[WorkspaceScope, Depends(require_workspace)],
+) -> BulkCallStatus:
+    _require(scope, "log_calls")
+    waiting = select(VoiceScheduledCall.id).where(
+        VoiceScheduledCall.workspace_id == scope.workspace.id,
+        VoiceScheduledCall.source == "BULK",
+        VoiceScheduledCall.status == "PENDING",
+    )
+    clause = lead_visibility_clause(
+        sees_all=scope.sees_all_members, visible=scope.visible_membership_ids
+    )
+    if clause is not None:
+        waiting = waiting.join(Lead, Lead.id == VoiceScheduledCall.lead_id).where(clause)
+    count = await scope.session.execute(select(func.count()).select_from(waiting.subquery()))
+    return BulkCallStatus(
+        waiting=int(count.scalar_one()),
+        on_calls=await calls_in_progress(scope.session, dt.datetime.now(dt.UTC)),
+        at_once=request.app.state.settings.voice_max_parallel_calls,
+    )
+
+
+@router.post(
+    "/voice/scheduled-calls/bulk/stop",
+    response_model=BulkCallStopped,
+    summary="Stop the bulk AI calls still waiting their turn",
+)
+async def stop_bulk_ai_call(
+    payload: BulkCallStop,
+    request: Request,
+    scope: Annotated[WorkspaceScope, Depends(require_workspace)],
+    leads: Annotated[LeadService, Depends(_lead_service)],
+) -> BulkCallStopped:
+    """Calls already going finish; only the waiting ones are cancelled."""
+    _require(scope, "log_calls")
+    lead_ids = payload.lead_ids
+    if not scope.sees_all_members:
+        # Only the leads this caller can see — someone else's queue is theirs.
+        if lead_ids is None:
+            rows = await scope.session.execute(
+                select(VoiceScheduledCall.lead_id).where(
+                    VoiceScheduledCall.workspace_id == scope.workspace.id,
+                    VoiceScheduledCall.source == "BULK",
+                    VoiceScheduledCall.status == "PENDING",
+                )
+            )
+            lead_ids = list(rows.scalars())
+        lead_ids = [lead.id for lead in await leads.visible_leads(lead_ids)]
+    user = await scope.session.raw.get(User, scope.membership.user_id)
+    who = user.full_name if user else "a team member"
+    cancelled = await _scheduled_service(request, scope).cancel_bulk(
+        lead_ids=lead_ids, why=f"stopped by {who}"
+    )
+    await scope.session.commit()
+    return BulkCallStopped(cancelled=cancelled)
+
+
+@router.delete(
+    "/voice/scheduled-calls/{scheduled_id}",
+    response_model=ScheduledCallRead,
+    summary="Cancel a scheduled AI call",
+)
+async def cancel_scheduled_call(
+    scheduled_id: uuid.UUID,
+    request: Request,
+    scope: Annotated[WorkspaceScope, Depends(require_workspace)],
+    leads: Annotated[LeadService, Depends(_lead_service)],
+) -> ScheduledCallRead:
+    _require(scope, "log_calls")
+    service = _scheduled_service(request, scope)
+    row = await service.get(scheduled_id)
+    lead = await leads.get_lead(row.lead_id)  # 404 for a lead this caller cannot see
+    user = await scope.session.raw.get(User, scope.membership.user_id)
+    who = user.full_name if user else "a team member"
+    row = await service.cancel(scheduled_id, why=f"cancelled by {who}")
+    await scope.session.commit()
+    await scope.session.refresh(row)
+    await scope.session.refresh(lead)
+    return _scheduled_read(row, lead)
+
+
+@router.get(
+    "/settings/voice-auto-callback",
+    response_model=AutoCallbackSetting,
+    summary="Whether callbacks a lead asks for are booked automatically",
+)
+async def get_auto_callback(
+    scope: Annotated[WorkspaceScope, Depends(require_workspace_admin)],
+) -> AutoCallbackSetting:
+    enabled, key = read_auto_callback(scope.workspace.settings)
+    raw = (scope.workspace.settings or {}).get("voice_auto_callback") or {}
+    return AutoCallbackSetting(enabled=enabled, field_key=key or raw.get("field_key"))
+
+
+@router.put(
+    "/settings/voice-auto-callback",
+    response_model=AutoCallbackSetting,
+    summary="Switch automatic callbacks on or off, and say which field holds the time",
+)
+async def put_auto_callback(
+    payload: AutoCallbackSetting,
+    scope: Annotated[WorkspaceScope, Depends(require_workspace_admin)],
+) -> AutoCallbackSetting:
+    if payload.enabled and not payload.field_key:
+        raise api_error(422, "field_required", "Choose the field that holds the callback time")
+    if payload.field_key:
+        exists = (
+            await scope.session.execute(
+                scope.session.select(LeadField).where(LeadField.key == payload.field_key)
+            )
+        ).scalar_one_or_none()
+        if exists is None:
+            raise api_error(422, "unknown_field", f"No field called {payload.field_key!r}")
+    settings = write_auto_callback(
+        scope.workspace.settings, enabled=payload.enabled, field_key=payload.field_key
+    )
+    scope.workspace.settings = settings
+    await scope.session.commit()
+    return AutoCallbackSetting(enabled=payload.enabled, field_key=payload.field_key)

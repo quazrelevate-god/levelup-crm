@@ -13,12 +13,15 @@ __all__ = [
     "AppRead",
     "AppUpdate",
     "AutomationCatalogue",
+    "CalendlySetup",
+    "CallPurposeRead",
     "GraphProblemRead",
     "NeverCallRead",
     "NeverCallWrite",
     "OperatorRead",
     "TriggerRead",
     "VariableRead",
+    "WhatsAppTest",
     "WorkflowCreate",
     "WorkflowRead",
     "WorkflowRunRead",
@@ -48,9 +51,18 @@ class OperatorRead(BaseModel):
     needs_value: bool
 
 
+class CallPurposeRead(BaseModel):
+    key: str
+    label: str
+
+
 class AutomationCatalogue(BaseModel):
     triggers: list[TriggerRead]
     operators: list[OperatorRead]
+    #: What an "AI call" block may ask for.
+    call_purposes: list[CallPurposeRead] = []
+    #: `{{lead.name}}` and friends, usable in any message.
+    lead_variables: list[VariableRead] = []
 
 
 class AppRead(BaseModel):
@@ -63,6 +75,8 @@ class AppRead(BaseModel):
     webhook_path: str | None
     #: Whether the app's signing secret has been pasted in. Never the secret.
     secret_set: bool
+    #: Whether an access token is saved (Calendly, WhatsApp). Never the token.
+    credential_set: bool = False
     settings: dict[str, Any]
     last_event_at: dt.datetime | None
 
@@ -73,7 +87,23 @@ class AppUpdate(BaseModel):
     is_active: bool | None = None
     #: Write-only. An empty string clears it.
     secret: str | None = Field(default=None, max_length=200)
+    #: Write-only access token (WhatsApp). An empty string clears it.
+    credential: str | None = Field(default=None, max_length=4000)
     settings: dict[str, Any] | None = None
+
+
+class CalendlySetup(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: A personal access token from Calendly → Integrations → API & Webhooks.
+    token: str = Field(min_length=10, max_length=4000)
+
+
+class WhatsAppTest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: Your own number, to receive Meta's "hello_world" template.
+    to: str = Field(min_length=8, max_length=20)
 
 
 class AppEventRead(BaseModel):
@@ -152,6 +182,8 @@ class WorkflowRunRead(BaseModel):
     data: dict[str, Any]
     duration_ms: int
     error: str | None
+    #: When a WAITING run carries on.
+    resume_at: dt.datetime | None = None
     created_at: dt.datetime
 
 

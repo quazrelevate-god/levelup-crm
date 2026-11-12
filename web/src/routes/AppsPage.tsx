@@ -5,7 +5,14 @@
  */
 
 import { Link } from 'react-router-dom'
-import { ArrowRight, CreditCard, Plug } from 'lucide-react'
+import {
+  ArrowRight,
+  CalendarCheck,
+  CreditCard,
+  type LucideIcon,
+  MessageCircle,
+  Plug,
+} from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -13,6 +20,12 @@ import { Card, CardContent } from '@/components/ui/card'
 import { PageHeader } from '@/components/ui/page-header'
 import { useAuth } from '@/features/auth/context'
 import { useApps } from '@/features/automation/api'
+
+const LOOKS: Record<string, { icon: LucideIcon; color: string }> = {
+  razorpay: { icon: CreditCard, color: 'bg-blue-600' },
+  calendly: { icon: CalendarCheck, color: 'bg-sky-600' },
+  whatsapp: { icon: MessageCircle, color: 'bg-green-600' },
+}
 
 export function AppsPage() {
   const { activeWorkspaceId } = useAuth()
@@ -35,12 +48,10 @@ export function AppsPage() {
             <Card key={app.provider}>
               <CardContent className="flex h-full flex-col gap-3 pt-5">
                 <div className="flex items-center gap-3">
-                  <span className="rounded-xl bg-blue-600 p-2 text-white">
-                    <CreditCard aria-hidden="true" className="size-5" />
-                  </span>
+                  <AppIcon provider={app.provider} />
                   <div className="min-w-0">
                     <p className="font-semibold">{app.label}</p>
-                    {app.connected && app.is_active && app.secret_set ? (
+                    {app.connected && app.is_active && (app.secret_set || app.credential_set) ? (
                       <Badge variant="success">Active</Badge>
                     ) : app.connected ? (
                       <Badge variant="outline">Setup not finished</Badge>
@@ -76,5 +87,15 @@ export function AppsPage() {
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+function AppIcon({ provider }: { readonly provider: string }) {
+  const look = LOOKS[provider] ?? { icon: Plug, color: 'bg-slate-600' }
+  const Icon = look.icon
+  return (
+    <span className={`rounded-xl p-2 text-white ${look.color}`}>
+      <Icon aria-hidden="true" className="size-5" />
+    </span>
   )
 }

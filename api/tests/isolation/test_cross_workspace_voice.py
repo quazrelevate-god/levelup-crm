@@ -71,6 +71,8 @@ class VoiceRecords:
     api_key: str
     #: docs/16: a pending calling-number request, paid from the wallet.
     request_id: str
+    #: docs/22: an AI call scheduled for later.
+    scheduled_id: str
 
 
 @pytest.fixture
@@ -159,6 +161,13 @@ async def _populate(
     )
     assert requested.status_code == 201, requested.text
 
+    scheduled = await api.post(
+        fixture.path("/voice/scheduled-calls"),
+        headers=headers,
+        json={"lead_id": lead_id, "due_at": "2030-01-02T10:00:00+05:30", "reason": name},
+    )
+    assert scheduled.status_code == 201, scheduled.text
+
     return VoiceRecords(
         lead_id=lead_id,
         call_id=triggered.json()["call_id"],
@@ -166,6 +175,7 @@ async def _populate(
         mapping_id=mapping.json()["id"],
         api_key=api_key,
         request_id=requested.json()["id"],
+        scheduled_id=scheduled.json()["id"],
     )
 
 
@@ -206,6 +216,7 @@ def _ids(records: VoiceRecords) -> dict[str, str]:
         "call_id": records.call_id,
         "mapping_id": records.mapping_id,
         "request_id": records.request_id,
+        "scheduled_id": records.scheduled_id,
     }
 
 
@@ -378,6 +389,7 @@ async def test_voice_collections_never_contain_another_workspace_s_rows(
     own = {
         "/voice/calls": a.call_id,
         "/voice/number-requests": a.request_id,
+        "/voice/scheduled-calls": a.scheduled_id,
     }.get(route, a.mapping_id)
     assert [item["id"] for item in items] == [own]
     _assert_nothing_of_b(response, tenants, b)

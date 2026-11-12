@@ -84,6 +84,7 @@ from app.services.lead_context import LeadContextBuilder
 from app.services.leads import LeadService
 from app.services.number_requests import NumberRequestService
 from app.services.program_context import ProgramContextService
+from app.services.scheduled_calls import ScheduledCallService
 from app.services.system_filters import lead_matches, parse_rule
 from app.services.voice_context import VoiceContext, VoiceContextService
 from app.services.voice_extraction import ExtractionOutcome, VoiceExtractionService
@@ -107,12 +108,15 @@ from app.services.voice_postcall import (
     normalise_execution,
     summarize_call,
 )
+from app.services.voice_recordings import call_ending
 from app.services.voice_settings import (
     VOICE_OUTCOME_STAGES,
+    read_auto_callback,
     read_never_call,
     read_outcome_stages,
 )
 from app.services.wallet import WalletService
+from app.services.workflows import WorkflowEngine
 from app.tenancy.session import ScopedSession
 
 logger = logging.getLogger(__name__)
@@ -580,6 +584,41 @@ class VoiceCallService:
             context=context,
             user_data=user_data,
             error=result.error,
+        )
+
+    async def _after_call(
+        self,
+        lead: Lead,
+        row: VoiceCallExecution,
+        *,
+        succeeded: bool,
+        now: dt.datetime,
+        callback_key: str | None,
+        callback_before: Any,
+    ) -> None:
+        """What a finished call sets in motion (docs/22): the callback the
+        lead asked for, and every workflow that starts on "AI call finished"."""
+        if callback_key is not None and succeeded:
+            said = (lead.values or {}).get(callback_key)
+            if said not in (None, "") and said != callback_before:
+                await ScheduledCallService(
+                    self._session,
+                    workspace=self._workspace,
+                    actor_id=self._actor_id,
+                    hours=self._calling_hours,
+                ).from_callback_request(lead, said=str(said), call_ended_at=now)
+
+        ending = call_ending(row)
+        data: dict[str, Any] = {
+            "answered": "yes" if succeeded else "no",
+            "status": row.bolna_status or "",
+            "duration_seconds": row.duration_seconds or 0,
+            "summary": row.summary or "",
+            "hangup_by": ending.hangup_by or "",
+            "hangup_reason": ending.hangup_reason or "",
+        }
+        await WorkflowEngine(self._session, workspace=self._workspace).run_trigger(
+            "voice.call_finished", lead, data
         )
 
     async def _ensure_not_excluded(self, lead: Lead) -> None:
@@ -1352,6 +1391,11 @@ class VoiceCallService:
             )
         row.call_action_id = call_action_id
 
+        # What the callback field held before this call, so a time the lead
+        # asked for on *this* call can be told from one asked for before.
+        auto_callback, callback_key = read_auto_callback(self._workspace.settings)
+        callback_before = (lead.values or {}).get(callback_key) if callback_key else None
+
         # Additive extraction write-back (docs/12), only on a terminal success:
         # a failed call may carry stale extracted data. Its own AUTOMATION
         # changeset, so an operator can undo it separately.
@@ -1376,6 +1420,14 @@ class VoiceCallService:
         # test call: it was a tester on the phone, not the lead.
         if not row.is_test:
             await self._move_stage_for_outcome(lead, call)
+            await self._after_call(
+                lead,
+                row,
+                succeeded=call.succeeded,
+                now=now,
+                callback_key=callback_key if auto_callback else None,
+                callback_before=callback_before,
+            )
 
         row.completed_at = now
         row.status = VoiceCallStatus.FAILED if call.failed else VoiceCallStatus.COMPLETED

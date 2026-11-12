@@ -7,7 +7,19 @@
  */
 
 import { createContext } from 'react'
-import { Filter, type LucideIcon, NotebookPen, PenLine, Route, UserSearch, Zap } from 'lucide-react'
+import {
+  Clock,
+  Filter,
+  Globe,
+  type LucideIcon,
+  MessageCircle,
+  NotebookPen,
+  PenLine,
+  PhoneCall,
+  Route,
+  UserSearch,
+  Zap,
+} from 'lucide-react'
 
 import type { LeadField, Stage } from '@/api/types'
 import type { ConditionRule, NodeData, NodeType, OperatorSpec, TriggerSpec } from './api'
@@ -19,7 +31,7 @@ export interface BlockSpec {
   readonly icon: LucideIcon
   /** Header colour. Saturated enough to read on both themes. */
   readonly header: string
-  readonly group: 'trigger' | 'check' | 'action'
+  readonly group: 'trigger' | 'check' | 'action' | 'timing' | 'send'
   readonly exits: readonly ('out' | 'yes' | 'no')[]
   readonly initial: () => NodeData
 }
@@ -37,8 +49,8 @@ export const BLOCKS: Record<NodeType, BlockSpec> = {
   },
   condition: {
     type: 'condition',
-    title: 'If the payment…',
-    hint: 'Check the amount, method or anything else the payment carries.',
+    title: 'If…',
+    hint: 'Check what happened: the payment amount, the call result, the booking…',
     icon: Filter,
     header: 'bg-violet-600 text-white',
     group: 'check',
@@ -88,6 +100,53 @@ export const BLOCKS: Record<NodeType, BlockSpec> = {
     exits: ['out'],
     initial: () => ({ text: '' }),
   },
+  wait: {
+    type: 'wait',
+    title: 'Wait',
+    hint: 'Pause, then carry on — e.g. wait 10 minutes, then check if they booked.',
+    icon: Clock,
+    header: 'bg-slate-500 text-white',
+    group: 'timing',
+    exits: ['out'],
+    initial: () => ({ amount: 10, unit: 'minutes' }),
+  },
+  ai_call: {
+    type: 'ai_call',
+    title: 'AI call',
+    hint: 'Book an AI call to the lead. It is placed within calling hours, one at a time.',
+    icon: PhoneCall,
+    header: 'bg-rose-600 text-white',
+    group: 'send',
+    exits: ['out'],
+    initial: () => ({ purpose: '', reason: '' }),
+  },
+  send_whatsapp: {
+    type: 'send_whatsapp',
+    title: 'Send WhatsApp',
+    hint: 'Send an approved WhatsApp template from your connected number.',
+    icon: MessageCircle,
+    header: 'bg-green-600 text-white',
+    group: 'send',
+    exits: ['out'],
+    initial: () => ({ template: '', language: 'en', to: '{{lead.phone}}', params: [] }),
+  },
+  call_api: {
+    type: 'call_api',
+    title: 'Call an API',
+    hint: 'Send the details to another system — n8n, Interakt, AiSensy, your own server.',
+    icon: Globe,
+    header: 'bg-zinc-700 text-white dark:bg-zinc-600',
+    group: 'send',
+    exits: ['out'],
+    initial: () => ({ method: 'POST', url: '', headers: [], body: '' }),
+  },
+}
+
+/** Which app a trigger belongs to, as the canvas names it. */
+export const APP_LABELS: Record<string, string> = {
+  razorpay: 'Razorpay',
+  calendly: 'Calendly',
+  voice: 'AI call',
 }
 
 /** What the canvas needs to describe a block in words. */
@@ -130,7 +189,11 @@ export function describeBlock(
   switch (type) {
     case 'trigger': {
       const spec = lookups.triggers.find((t) => t.key === data.trigger)
-      return [spec ? `${spec.app ? 'Razorpay · ' : ''}${spec.label}` : 'Choose a trigger']
+      return [
+        spec
+          ? `${spec.app ? `${APP_LABELS[spec.app] ?? spec.app} · ` : ''}${spec.label}`
+          : 'Choose a trigger',
+      ]
     }
     case 'condition': {
       const rules = data.rules ?? []
@@ -159,6 +222,22 @@ export function describeBlock(
     case 'add_note': {
       const text = (data.text ?? '').trim()
       return [text ? (text.length > 60 ? `${text.slice(0, 60)}…` : text) : 'Write the note']
+    }
+    case 'wait': {
+      const amount = Number(data.amount ?? 0)
+      const unit = data.unit ?? 'minutes'
+      return [amount > 0 ? `${amount} ${amount === 1 ? unit.slice(0, -1) : unit}` : 'How long?']
+    }
+    case 'ai_call': {
+      const purpose = data.purpose ?? ''
+      const label = purpose ? purpose.replace(/_/g, ' ') : 'an ordinary call'
+      return [`Call the lead — ${label}`]
+    }
+    case 'send_whatsapp':
+      return [data.template ? `Template “${data.template}”` : 'Choose a template']
+    case 'call_api': {
+      const host = (data.url ?? '').replace(/^https?:\/\//, '').split('/')[0]
+      return [host ? `${(data.method ?? 'POST').toUpperCase()} ${host}` : 'Enter the address']
     }
   }
 }

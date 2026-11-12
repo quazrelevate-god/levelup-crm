@@ -66,6 +66,9 @@ class AppConnection(TenantModel):
     created_by_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("memberships.id", ondelete="SET NULL")
     )
+    #: An access token the CRM uses to call the app's API (Calendly, WhatsApp).
+    #: Write-only like `secret`: never returned, only "set" or "not set".
+    credential: Mapped[str | None] = mapped_column(Text())
     last_event_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
@@ -184,7 +187,8 @@ class WorkflowRun(TenantModel):
     app_event_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("app_events.id", ondelete="SET NULL")
     )
-    #: SUCCESS or FAILED (a step could not be done).
+    #: SUCCESS, FAILED (a step could not be done), WAITING (paused at a Wait
+    #: block or for the worker to send something), or CANCELLED.
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     #: `[{node_id, type, label, result, detail}]` in the order they ran.
     steps: Mapped[list[dict[str, Any]]] = mapped_column(
@@ -198,7 +202,18 @@ class WorkflowRun(TenantModel):
         Integer(), nullable=False, default=0, server_default=text("0")
     )
     error: Mapped[str | None] = mapped_column(Text())
+    #: Where a WAITING run picks up: `[{"nodes": [...], "at": iso, "seen": [...]}]`.
+    pending: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB(), nullable=False, server_default=text("'[]'::jsonb")
+    )
+    #: The earliest `pending` moment; the worker's only query.
+    resume_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
         Index("ix_workflow_runs_recent", "workspace_id", "workflow_id", "created_at"),
+        Index(
+            "ix_workflow_runs_waiting",
+            "resume_at",
+            postgresql_where=text("status = 'WAITING'"),
+        ),
     )

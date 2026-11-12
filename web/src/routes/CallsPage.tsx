@@ -15,7 +15,13 @@ import { Bot, ChevronRight } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 import { PageHeader } from '@/components/ui/page-header'
+import {
+  SOURCE_LABELS,
+  useCancelScheduledCall,
+  useScheduledCalls,
+} from '@/features/calls/scheduled'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/features/auth/context'
 import { useVoiceCalls, type VoiceCallSummary } from '@/features/calls/api'
@@ -93,6 +99,8 @@ export function CallsPage() {
         description="Every call the AI agent has placed, newest first. Open one for its summary, transcript and the provider's own record."
       />
 
+      <UpcomingCalls workspaceId={workspaceId} />
+
       <Card>
         <CardHeader>
           <CardTitle>AI calls</CardTitle>
@@ -117,5 +125,68 @@ export function CallsPage() {
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+/** AI calls the worker will place: callbacks, workflow calls, booked by hand. */
+function UpcomingCalls({ workspaceId }: { readonly workspaceId: string }) {
+  const scheduled = useScheduledCalls(workspaceId)
+  const cancel = useCancelScheduledCall(workspaceId)
+  const items = scheduled.data?.items ?? []
+  if (items.length === 0) return null
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Upcoming AI calls</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-muted-foreground border-b text-left text-xs">
+              <tr>
+                <th className="py-2 pr-3 font-medium">When</th>
+                <th className="py-2 pr-3 font-medium">Lead</th>
+                <th className="py-2 pr-3 font-medium">Why</th>
+                <th className="py-2" />
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((row) => (
+                <tr key={row.id} className="border-border/60 border-b last:border-b-0">
+                  <td className="py-2 pr-3 whitespace-nowrap">
+                    {new Date(row.due_at).toLocaleString()}
+                    {row.status === 'PLACING' ? ' · calling now' : ''}
+                  </td>
+                  <td className="py-2 pr-3">
+                    <Link
+                      to={`/leads?lead=${row.lead_id}`}
+                      className="text-primary hover:underline"
+                    >
+                      {row.lead_name}
+                    </Link>
+                  </td>
+                  <td className="text-muted-foreground py-2 pr-3">
+                    {SOURCE_LABELS[row.source] ?? row.source}
+                    {row.reason ? ` · ${row.reason}` : ''}
+                  </td>
+                  <td className="py-2 text-right">
+                    {row.status === 'PENDING' ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={cancel.isPending}
+                        onClick={() => cancel.mutate(row.id)}
+                      >
+                        Cancel
+                      </Button>
+                    ) : null}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
   )
 }

@@ -104,3 +104,24 @@ def write_never_call(settings: Any, conditions: dict[str, Any]) -> dict[str, Any
     else:
         existing.pop(VOICE_NEVER_CALL, None)
     return existing
+
+
+#: Book the AI call a lead asks for (docs/22). `{"enabled": bool, "field_key":
+#: <the lead field the call's extraction writes the requested time into>}`.
+#: Which field is the workspace's choice — its schema, its words. Off unless
+#: switched on: nothing dials a lead on its own until someone decides it may.
+VOICE_AUTO_CALLBACK = "voice_auto_callback"
+
+
+def read_auto_callback(settings: Any) -> tuple[bool, str | None]:
+    raw = (settings or {}).get(VOICE_AUTO_CALLBACK) if isinstance(settings, dict) else None
+    if not isinstance(raw, dict):
+        return False, None
+    key = raw.get("field_key")
+    return bool(raw.get("enabled")) and bool(key), str(key) if key else None
+
+
+def write_auto_callback(settings: Any, *, enabled: bool, field_key: str | None) -> dict[str, Any]:
+    existing = dict(settings) if isinstance(settings, dict) else {}
+    existing[VOICE_AUTO_CALLBACK] = {"enabled": enabled, "field_key": field_key}
+    return existing

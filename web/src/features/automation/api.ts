@@ -37,10 +37,23 @@ export interface OperatorSpec {
 export interface AutomationCatalogue {
   readonly triggers: readonly TriggerSpec[]
   readonly operators: readonly OperatorSpec[]
+  /** What an "AI call" block may ask for. */
+  readonly call_purposes: readonly { readonly key: string; readonly label: string }[]
+  /** `{{lead.name}}` and friends, usable in any message. */
+  readonly lead_variables: readonly TriggerVariable[]
 }
 
 export type NodeType =
-  'trigger' | 'condition' | 'lead_condition' | 'update_fields' | 'update_stage' | 'add_note'
+  | 'trigger'
+  | 'condition'
+  | 'lead_condition'
+  | 'update_fields'
+  | 'update_stage'
+  | 'add_note'
+  | 'wait'
+  | 'ai_call'
+  | 'send_whatsapp'
+  | 'call_api'
 
 export interface ConditionRule {
   variable: string
@@ -59,6 +72,22 @@ export interface NodeData extends Record<string, unknown> {
   stage_id?: string
   lost_reason_id?: string
   text?: string
+  /** Wait */
+  amount?: number
+  unit?: 'minutes' | 'hours' | 'days'
+  /** AI call */
+  purpose?: string
+  reason?: string
+  /** Send WhatsApp */
+  template?: string
+  language?: string
+  to?: string
+  params?: string[]
+  /** Call an API */
+  method?: string
+  url?: string
+  headers?: { key: string; value: string }[]
+  body?: string
 }
 
 export interface GraphNode {
@@ -120,6 +149,8 @@ export interface WorkflowRun {
   readonly data: Record<string, unknown>
   readonly duration_ms: number
   readonly error: string | null
+  /** When a WAITING run carries on. */
+  readonly resume_at?: string | null
   readonly created_at: string
 }
 
@@ -137,6 +168,8 @@ export interface ConnectedApp {
   readonly is_active: boolean
   readonly webhook_path: string | null
   readonly secret_set: boolean
+  /** An access token is saved (Calendly, WhatsApp). Never the token. */
+  readonly credential_set: boolean
   readonly settings: Record<string, unknown>
   readonly last_event_at: string | null
 }
@@ -281,7 +314,12 @@ export function useUpdateApp(workspaceId: string) {
       body,
     }: {
       provider: string
-      body: { is_active?: boolean; secret?: string; settings?: Record<string, unknown> }
+      body: {
+        is_active?: boolean
+        secret?: string
+        credential?: string
+        settings?: Record<string, unknown>
+      }
     }) => api.patch<ConnectedApp>(`${base(workspaceId)}/apps/${provider}`, body),
     onSuccess: () => client.invalidateQueries({ queryKey: appsKey(workspaceId) }),
   })
@@ -328,5 +366,42 @@ export function useSetNeverCallRule(workspaceId: string) {
         { conditions },
       ),
     onSuccess: (saved) => client.setQueryData(['voice-never-call', workspaceId], saved),
+  })
+}
+
+export function useSetupCalendly(workspaceId: string) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (token: string) =>
+      api.post<ConnectedApp>(`${base(workspaceId)}/apps/calendly/setup`, { token }),
+    onSuccess: () => client.invalidateQueries({ queryKey: appsKey(workspaceId) }),
+  })
+}
+
+export function useTestWhatsApp(workspaceId: string) {
+  return useMutation({
+    mutationFn: (to: string) =>
+      api.post<TestResult>(`${base(workspaceId)}/apps/whatsapp/test`, { to }),
+  })
+}
+
+export interface AutoCallback {
+  readonly enabled: boolean
+  readonly field_key: string | null
+}
+
+export function useAutoCallback(workspaceId: string) {
+  return useQuery({
+    queryKey: ['voice-auto-callback', workspaceId],
+    queryFn: () => api.get<AutoCallback>(`${base(workspaceId)}/settings/voice-auto-callback`),
+  })
+}
+
+export function useSetAutoCallback(workspaceId: string) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (body: AutoCallback) =>
+      api.put<AutoCallback>(`${base(workspaceId)}/settings/voice-auto-callback`, body),
+    onSuccess: (saved) => client.setQueryData(['voice-auto-callback', workspaceId], saved),
   })
 }

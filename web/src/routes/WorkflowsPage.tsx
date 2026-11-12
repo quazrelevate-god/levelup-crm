@@ -25,6 +25,7 @@ import {
   useUpdateWorkflow,
   useWorkflows,
 } from '@/features/automation/api'
+import { APP_LABELS } from '@/features/automation/blockSpecs'
 import { cn } from '@/lib/utils'
 
 interface Starter {
@@ -81,6 +82,126 @@ const STARTERS: readonly Starter[] = [
     },
   },
   {
+    key: 'paid-not-booked',
+    title: 'Paid but not booked → AI call after 10 minutes',
+    description:
+      'Payment received → change stage → wait 10 minutes → if the lead has still not booked, an AI call helps them book. You pick the stage and the “not booked” check.',
+    trigger: 'razorpay.payment_captured',
+    graph: {
+      nodes: [
+        {
+          id: 'trigger',
+          type: 'trigger',
+          position: { x: 40, y: 160 },
+          data: { trigger: 'razorpay.payment_captured' },
+        },
+        {
+          id: 'fee',
+          type: 'condition',
+          position: { x: 330, y: 160 },
+          data: {
+            title: 'Is it the application fee?',
+            match: 'all',
+            rules: [{ variable: 'amount', operator: 'equals', value: '' }],
+          },
+        },
+        { id: 'stage', type: 'update_stage', position: { x: 640, y: 80 }, data: { stage_id: '' } },
+        {
+          id: 'wait',
+          type: 'wait',
+          position: { x: 640, y: 240 },
+          data: { amount: 10, unit: 'minutes' },
+        },
+        {
+          id: 'not-booked',
+          type: 'lead_condition',
+          position: { x: 950, y: 240 },
+          data: {
+            title: 'Still not booked?',
+            conditions: { type: 'group', op: 'AND', children: [] },
+          },
+        },
+        {
+          id: 'call',
+          type: 'ai_call',
+          position: { x: 1260, y: 200 },
+          data: { purpose: 'followup_booking', reason: 'paid {{amount}}, no interview booked' },
+        },
+      ],
+      edges: [
+        { id: 'e1', source: 'trigger', sourceHandle: 'out', target: 'fee' },
+        { id: 'e2', source: 'fee', sourceHandle: 'yes', target: 'stage' },
+        { id: 'e3', source: 'fee', sourceHandle: 'yes', target: 'wait' },
+        { id: 'e4', source: 'wait', sourceHandle: 'out', target: 'not-booked' },
+        { id: 'e5', source: 'not-booked', sourceHandle: 'yes', target: 'call' },
+      ],
+    },
+  },
+  {
+    key: 'calendly-booked',
+    title: 'When a lead books on Calendly',
+    description: 'Meeting booked → change stage (e.g. Interview Scheduled). You pick the stage.',
+    trigger: 'calendly.invitee_created',
+    graph: {
+      nodes: [
+        {
+          id: 'trigger',
+          type: 'trigger',
+          position: { x: 40, y: 160 },
+          data: { trigger: 'calendly.invitee_created' },
+        },
+        { id: 'stage', type: 'update_stage', position: { x: 360, y: 160 }, data: { stage_id: '' } },
+        {
+          id: 'note',
+          type: 'add_note',
+          position: { x: 360, y: 300 },
+          data: { text: 'Booked {{event_name}} for {{start_time}}' },
+        },
+      ],
+      edges: [
+        { id: 'e1', source: 'trigger', sourceHandle: 'out', target: 'stage' },
+        { id: 'e2', source: 'trigger', sourceHandle: 'out', target: 'note' },
+      ],
+    },
+  },
+  {
+    key: 'after-call-whatsapp',
+    title: 'After an AI call, send a WhatsApp',
+    description:
+      'AI call finished → if they answered → send a WhatsApp template (e.g. the fee link). You pick the template.',
+    trigger: 'voice.call_finished',
+    graph: {
+      nodes: [
+        {
+          id: 'trigger',
+          type: 'trigger',
+          position: { x: 40, y: 160 },
+          data: { trigger: 'voice.call_finished' },
+        },
+        {
+          id: 'answered',
+          type: 'condition',
+          position: { x: 330, y: 160 },
+          data: {
+            title: 'Did they answer?',
+            match: 'all',
+            rules: [{ variable: 'answered', operator: 'equals', value: 'yes' }],
+          },
+        },
+        {
+          id: 'wa',
+          type: 'send_whatsapp',
+          position: { x: 640, y: 120 },
+          data: { template: '', language: 'en', to: '{{lead.phone}}', params: ['{{lead.name}}'] },
+        },
+      ],
+      edges: [
+        { id: 'e1', source: 'trigger', sourceHandle: 'out', target: 'answered' },
+        { id: 'e2', source: 'answered', sourceHandle: 'yes', target: 'wa' },
+      ],
+    },
+  },
+  {
     key: 'blank',
     title: 'Start from scratch',
     description: 'Just the trigger. Add checks and actions yourself.',
@@ -109,7 +230,7 @@ export function WorkflowsPage() {
   const triggerLabel = (key: string | null) => {
     const spec = catalogue.data?.triggers.find((t) => t.key === key)
     if (!spec) return 'No trigger yet'
-    return `${spec.app === 'razorpay' ? 'Razorpay · ' : ''}${spec.label}`
+    return `${spec.app ? `${APP_LABELS[spec.app] ?? spec.app} · ` : ''}${spec.label}`
   }
 
   return (

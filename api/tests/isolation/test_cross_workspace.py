@@ -521,6 +521,8 @@ VOICE_ID_ROUTES: list[tuple[str, str]] = [
     ("GET", "/voice/calls/{call_id}"),
     # docs/20: another workspace's call recording.
     ("GET", "/voice/calls/{call_id}/recording"),
+    # docs/22: cancelling another workspace's scheduled AI call.
+    ("DELETE", "/voice/scheduled-calls/{scheduled_id}"),
     ("GET", "/voice/extraction-mappings/{mapping_id}"),
     ("PATCH", "/voice/extraction-mappings/{mapping_id}"),
     ("DELETE", "/voice/extraction-mappings/{mapping_id}"),
@@ -528,6 +530,8 @@ VOICE_ID_ROUTES: list[tuple[str, str]] = [
 
 VOICE_COLLECTION_ROUTES: list[str] = [
     "/voice/calls",
+    # docs/22: AI calls waiting to be placed.
+    "/voice/scheduled-calls",
     "/voice/extraction-mappings",
     "/voice/number-requests",
 ]
@@ -544,6 +548,12 @@ VOICE_COLLECTION_WRITE_ROUTES: list[tuple[str, str]] = [
     ("PUT", "/voice/calling-numbers"),
     # docs/16: requesting a number on another workspace's wallet.
     ("POST", "/voice/number-requests"),
+    # docs/22: scheduling a call on another workspace's lead, and its setting.
+    ("POST", "/voice/scheduled-calls"),
+    # docs/23: a bulk AI call on another workspace's leads, and stopping one.
+    ("POST", "/voice/scheduled-calls/bulk"),
+    ("POST", "/voice/scheduled-calls/bulk/stop"),
+    ("PUT", "/settings/voice-auto-callback"),
 ]
 
 #: docs/15: the variable catalogue — the workspace's own field names plus the
@@ -552,6 +562,10 @@ VOICE_CATALOGUE_ROUTES: list[tuple[str, str]] = [
     ("GET", "/voice/variables"),
     # docs/16: which numbers this workspace calls from.
     ("GET", "/voice/calling-numbers"),
+    # docs/22: whether callbacks are booked automatically.
+    ("GET", "/settings/voice-auto-callback"),
+    # docs/23: how far another workspace's bulk AI call has got.
+    ("GET", "/voice/scheduled-calls/bulk"),
 ]
 
 #: A lookup by natural key rather than id: B's phone number, asked of A.
@@ -566,6 +580,13 @@ _VOICE_BODIES: dict[str, dict[str, object]] = {
     "/voice/approvals/{lead_id}": {"approved": True},
     "/voice/calling-numbers": {"numbers": ["+919000000999"]},
     "/voice/number-requests": {"region": "Smuggled"},
+    "/voice/scheduled-calls": {
+        "lead_id": "00000000-0000-4000-8000-000000000001",
+        "due_at": "2030-01-01T10:00:00+05:30",
+    },
+    "/settings/voice-auto-callback": {"enabled": False, "field_key": None},
+    "/voice/scheduled-calls/bulk": {"lead_ids": ["00000000-0000-4000-8000-000000000001"]},
+    "/voice/scheduled-calls/bulk/stop": {},
     "/voice/number-requests/{request_id}/fulfil": {"phone_number": "+919000000998"},
     "/voice/context/{lead_id}/summary": {
         "summary": "Smuggled by an outsider.",
@@ -990,6 +1011,8 @@ AUTOMATION_COLLECTION_WRITE_ROUTES: list[tuple[str, str]] = [
     ("POST", "/apps/{provider}/connect"),
     ("PATCH", "/apps/{provider}"),
     ("POST", "/apps/{provider}/rotate-url"),
+    ("POST", "/apps/calendly/setup"),
+    ("POST", "/apps/whatsapp/test"),
     ("PUT", "/settings/voice-never-call"),
 ]
 

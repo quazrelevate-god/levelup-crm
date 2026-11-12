@@ -52,6 +52,7 @@ import {
   useTableLayout,
 } from '@/features/filters/api'
 import { FilterBuilder } from '@/features/filters/FilterBuilder'
+import { BulkAiCall } from '@/features/calls/BulkAiCall'
 import { useCreateLead, useLead, useMessageTemplates } from '@/features/leads/api'
 import { ColumnPicker } from '@/features/leads/ColumnPicker'
 import { LeadDetail } from '@/features/leads/LeadDetail'
@@ -407,40 +408,52 @@ export function LeadsPage() {
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <QuickFilterBar stages={allStages} value={quick} onChange={setQuick} />
-        {selectedIds.size > 0 ? (
-          <div className="flex items-center gap-2">
-            <span className="text-sm">
-              {selectedIds.size} selected
-              <button
-                type="button"
-                className="text-muted-foreground hover:text-foreground ml-2 underline"
-                onClick={() => setSelectedIds(new Set())}
+        <div className="flex flex-wrap items-center gap-2">
+          {selectedIds.size > 0 ? (
+            <>
+              <span className="text-sm">
+                {selectedIds.size} selected
+                <button
+                  type="button"
+                  className="text-muted-foreground hover:text-foreground ml-2 underline"
+                  onClick={() => setSelectedIds(new Set())}
+                >
+                  clear
+                </button>
+              </span>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setBulkError(null)
+                  setNotice(null)
+                  setBulkOpen(true)
+                }}
               >
-                clear
-              </button>
-            </span>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setBulkError(null)
-                setNotice(null)
-                setBulkOpen(true)
-              }}
-            >
-              Edit {selectedIds.size}
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setDistributeError(null)
-                setNotice(null)
-                setDistributeOpen(true)
-              }}
-            >
-              Distribute {selectedIds.size}
-            </Button>
-          </div>
-        ) : null}
+                Edit {selectedIds.size}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setDistributeError(null)
+                  setNotice(null)
+                  setDistributeOpen(true)
+                }}
+              >
+                Distribute {selectedIds.size}
+              </Button>
+            </>
+          ) : null}
+          <BulkAiCall
+            workspaceId={workspaceId}
+            selectedIds={selectedIds}
+            onQueued={(text) => {
+              setSelectedIds(new Set())
+              setError(null)
+              setNotice(text)
+            }}
+            onNotice={setNotice}
+          />
+        </div>
       </div>
 
       <Card>

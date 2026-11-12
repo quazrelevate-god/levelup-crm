@@ -3,6 +3,7 @@ import { createBrowserRouter, Navigate } from 'react-router-dom'
 import { AiCallingRulesPage } from '@/routes/AiCallingRulesPage'
 import { AppLayout } from '@/routes/AppLayout'
 import { AppsPage } from '@/routes/AppsPage'
+import { CalendlyAppPage } from '@/routes/CalendlyAppPage'
 import { CustomActionsPage } from '@/routes/CustomActionsPage'
 import { DashboardPage } from '@/routes/DashboardPage'
 import { DashboardSettingsPage } from '@/routes/DashboardSettingsPage'
@@ -33,6 +34,7 @@ import { WalletPage } from '@/routes/WalletPage'
 import { CallingNumbersPage } from '@/routes/CallingNumbersPage'
 import { CallFactsPage } from '@/routes/CallFactsPage'
 import { VoiceVariablesPage } from '@/routes/VoiceVariablesPage'
+import { WhatsAppAppPage } from '@/routes/WhatsAppAppPage'
 import { WorkflowEditorPage } from '@/routes/WorkflowEditorPage'
 import { WorkflowsPage } from '@/routes/WorkflowsPage'
 import { WorkspacePickerPage } from '@/routes/WorkspacePickerPage'
@@ -94,6 +96,8 @@ export const router = createBrowserRouter([
       { path: 'automations/:workflowId', element: <WorkflowEditorPage /> },
       { path: 'apps', element: <AppsPage /> },
       { path: 'apps/razorpay', element: <RazorpayAppPage /> },
+      { path: 'apps/calendly', element: <CalendlyAppPage /> },
+      { path: 'apps/whatsapp', element: <WhatsAppAppPage /> },
       // The deployment status page moved under Settings with the rest of the
       // operator surface. The old path still works so bookmarks and the
       // existing test suite do not break on a redesign.

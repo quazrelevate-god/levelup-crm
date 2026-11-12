@@ -147,7 +147,7 @@ export const SETTINGS_GROUPS: readonly NavGroup[] = [
         to: '/settings/ai-calling-rules',
         label: 'AI calling rules',
         icon: ShieldBan,
-        description: 'Leads the AI must never call — for example, anyone who has already paid.',
+        description: 'Who the AI must never call (e.g. anyone who paid), and automatic callbacks.',
       },
       {
         to: '/settings/call-facts',

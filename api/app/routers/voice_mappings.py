@@ -56,9 +56,7 @@ def _require(scope: WorkspaceScope, group: str, capability: str) -> None:
 
 async def _assert_field(scope: WorkspaceScope, key: str) -> LeadField:
     """The target key must resolve to a live LeadField in this workspace."""
-    rows = await scope.session.execute(
-        select(LeadField).where(LeadField.key == key).limit(1)
-    )
+    rows = await scope.session.execute(select(LeadField).where(LeadField.key == key).limit(1))
     field: LeadField | None = rows.scalar_one_or_none()
     if field is None:
         raise api_error(
@@ -165,9 +163,7 @@ async def create_mapping(
     return VoiceExtractionMappingRead.model_validate(mapping)
 
 
-async def _load(
-    scope: WorkspaceScope, mapping_id: uuid.UUID
-) -> VoiceExtractionMapping:
+async def _load(scope: WorkspaceScope, mapping_id: uuid.UUID) -> VoiceExtractionMapping:
     row = await scope.session.get(VoiceExtractionMapping, mapping_id)
     # `get` on a `ScopedSession` already filters by workspace via loader
     # criteria (see `app/tenancy/session.py`) — a mapping from another

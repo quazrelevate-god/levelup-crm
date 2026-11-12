@@ -25,6 +25,8 @@ from app.workers.scheduler import (
     WorkerSettings,
     dispatch,
     heartbeat,
+    place_calls,
+    resume_runs,
     settle_numbers,
     tick,
 )
@@ -51,9 +53,14 @@ def test_every_cron_job_is_registered() -> None:
     being delivered, with nothing in any log to say a job was never registered.
     """
     registered = {job.coroutine for job in WorkerSettings.cron_jobs}
-    assert registered == {tick, dispatch, heartbeat, settle_numbers}, {
-        job.name for job in WorkerSettings.cron_jobs
-    }
+    assert registered == {
+        tick,
+        dispatch,
+        heartbeat,
+        settle_numbers,
+        place_calls,
+        resume_runs,
+    }, {job.name for job in WorkerSettings.cron_jobs}
 
 
 @pytest.mark.parametrize("hook", ["on_startup", "on_shutdown"])

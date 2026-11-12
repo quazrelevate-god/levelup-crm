@@ -457,3 +457,83 @@ class VoiceCallDetailRead(VoiceCallSummaryRead):
     call_log_id: uuid.UUID | None = None
     summary_error: str | None = None
     last_error: str | None = None
+
+
+class ScheduledCallRead(BaseModel):
+    """An AI call to be placed later (docs/22)."""
+
+    id: uuid.UUID
+    lead_id: uuid.UUID
+    lead_name: str
+    due_at: dt.datetime
+    #: PENDING, PLACING, PLACED, CANCELLED, SKIPPED, FAILED.
+    status: str
+    #: CALLBACK (the lead asked), WORKFLOW, MANUAL, or BULK (docs/23).
+    source: str
+    purpose: str | None = None
+    reason: str | None = None
+    call_id: uuid.UUID | None = None
+    attempts: int = 0
+    last_error: str | None = None
+    created_at: dt.datetime
+
+
+class ScheduledCallCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    lead_id: uuid.UUID
+    #: With a timezone. Moved into calling hours if outside them.
+    due_at: dt.datetime
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class BulkCallCreate(BaseModel):
+    """Call these leads now with AI, in this order (docs/23)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    lead_ids: list[uuid.UUID] = Field(min_length=1, max_length=500)
+
+
+class BulkCallResult(BaseModel):
+    queued: int
+    #: Already waiting for an AI call; left as it was.
+    already_waiting: int
+    #: Covered by the never-AI-call rule.
+    never_call: int
+    #: Deleted, or not a lead this caller can see.
+    not_found: int
+    #: When the first call can start: now, or when calling hours open.
+    starts_at: dt.datetime | None = None
+    #: How many calls run at the same time.
+    at_once: int
+
+
+class BulkCallStatus(BaseModel):
+    """The bulk AI call in progress, for the lead list."""
+
+    #: Leads still waiting their turn.
+    waiting: int
+    #: AI calls going right now (any kind).
+    on_calls: int
+    at_once: int
+
+
+class BulkCallStop(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: Only these leads; every waiting bulk call when absent.
+    lead_ids: list[uuid.UUID] | None = Field(default=None, max_length=500)
+
+
+class BulkCallStopped(BaseModel):
+    cancelled: int
+
+
+class AutoCallbackSetting(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: Book the AI call a lead asks for on a call.
+    enabled: bool = False
+    #: The lead field the call writes the asked-for time into.
+    field_key: str | None = Field(default=None, max_length=64)

@@ -236,7 +236,8 @@ async def test_connecting_gives_a_url_and_the_secret_is_never_shown(
     path = await _connect(api, ws)
 
     assert path.startswith("/api/v1/hooks/razorpay/")
-    [app] = (await api.get(ws.path("/apps"), headers=ws.owner.auth)).json()
+    apps = (await api.get(ws.path("/apps"), headers=ws.owner.auth)).json()
+    [app] = [a for a in apps if a["provider"] == "razorpay"]
     assert (app["provider"], app["connected"], app["secret_set"]) == ("razorpay", True, True)
     assert SECRET not in json.dumps(app)
 
